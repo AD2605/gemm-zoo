@@ -17,9 +17,8 @@ sycl::event populate_with_random(T* device_ptr, std::size_t num_elements,
     cgh.parallel_for(num_elements, [=](std::size_t element_id) {
       using namespace oneapi::math::rng::device;
       philox4x32x10<> engine(seed, element_id);
-      constexpr T min_value =
-          std::is_signed_v<T> ? static_cast<T>(-10.0F) : static_cast<T>(1.0F);
-      uniform<T> distribution(min_value, static_cast<T>(10.0F));
+      const float min_value = std::is_signed_v<T> ? -10.0F : 1.0F;
+      uniform<float> distribution(min_value, 10.0F);
       // something I picked up from cutlass, create random numbers with exact
       // zeros so that one needn't bother with threshold value during testing.
       // This eliminates rounding issues and fp errors completely.
@@ -59,7 +58,7 @@ bool compare_results(const T* output, const T* reference,
 }
 
 template <typename TIn, typename TOut>
-void compute_reference(const TIn* a, const TIn* b, TIn* c, int m, int n, int k,
+void compute_reference(const TIn* a, const TIn* b, TOut* c, int m, int n, int k,
                        const TOut alpha, const TOut beta, sycl::queue& queue) {
   // TODO: pass a matrix config POD struct here, containing
   // layout, and leading dimensions etc...

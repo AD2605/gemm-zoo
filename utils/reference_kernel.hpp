@@ -2,15 +2,17 @@
 #define UTILS_REFERENCE_KERNEL_HPP
 
 #include "defines.hpp"
+#include "sycl/queue.hpp"
 
+#include <cstddef>
 #include <sycl/sycl.hpp>
 
 namespace utils {
 namespace detail {
 template <typename TIn, typename TOut>
 INLINE void reference_gemm(const TIn* a, const TIn* b, const TOut* c, TOut* d,
-                           int m, int n, int k, TOut alpha, TOut beta,
-                           const sycl::nd_item<1>& it) {
+                           std::size_t m, std::size_t n, std::size_t k,
+                           TOut alpha, TOut beta, const sycl::nd_item<1>& it) {
   auto global_id = it.get_global_id(0);
   const auto output_row = global_id / n;
   const auto output_col = global_id % n;
@@ -28,16 +30,18 @@ INLINE void reference_gemm(const TIn* a, const TIn* b, const TOut* c, TOut* d,
 
 template <typename TIn, typename TOut>
 struct reference_kernel {
-  reference_kernel(int m, int n, int k) : m(m), n(n), k(k) {
+  reference_kernel(std::size_t m, std::size_t n, std::size_t k,
+                   sycl::queue& queue)
+      : m(m), n(n), k(k) {
     launch_range = sycl::nd_range<1>(static_cast<std::size_t>(m * n),
                                      static_cast<std::size_t>(32));
   }
 
   sycl::event operator()(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                          TOut alpha, TOut beta, sycl::queue& queue) {
-    int m_copy = m;
-    int n_copy = n;
-    int k_copy = k;
+    auto m_copy = m;
+    auto n_copy = n;
+    auto k_copy = k;
     return queue.submit([&](sycl::handler& cgh) {
       cgh.parallel_for(launch_range, [=](sycl::nd_item<1> it) {
         [[clang::always_inline]] detail::reference_gemm(
@@ -47,9 +51,9 @@ struct reference_kernel {
   }
 
  private:
-  int m;
-  int n;
-  int k;
+  std::size_t m;
+  std::size_t n;
+  std::size_t k;
   sycl::nd_range<1> launch_range;
 };
 
