@@ -50,8 +50,19 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
     auto w_coord = (sg_id % blocks_per_row) * block_width;
 
     // begin prefetch of A and B tile, Then load C tile and multiply it with
-    // Beta
-    __builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
+    // Beta.
+    // I fetch the C tile before starting the matmuls
+    // so that it does not stall later when doing the
+    // addition with the result. Since GPU execution model
+    // is "fire-and-forget", I expect the GPU to schedule
+    // this load and move ahead, and since there is no dependency
+    // on this load until the end, the result of load should be ready
+    // in the meantine when we need it.
+
+    // TODO: Commenting out prefetches because they give much better
+    // performance. Need to understand why
+
+    /*__builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
         (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
         uint2{0, static_cast<uint>(h_coord)},
         intel::cacheopts::LSC_LDCC_L1C_L3C);
@@ -59,6 +70,7 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
         (intptr_t)(b), b_matrix_width, k - 1, b_matrix_width,
         intel::uint2{static_cast<uint>(w_coord), 0},
         intel::cacheopts::LSC_LDCC_L1C_L3C);
+    */
     auto c_tile_uint = __builtin_IB_subgroup_block_read_flat_u32_m8k16v1(
         (intptr_t)(c), result_matrix_width, m - 1, result_matrix_width,
         uint2{static_cast<uint>(w_coord), static_cast<uint>(h_coord)});
@@ -76,7 +88,8 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
               (intptr_t)(b), b_matrix_width, k - 1, b_matrix_width,
               uint2{static_cast<uint>(w_coord), static_cast<uint>(i)});
 
-      if ((i + k_tile_size) < k) {
+      // These prefetches are the killer
+      /*if ((i + k_tile_size) < k) {
         __builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
             (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
             uint2{static_cast<uint>(i + k_tile_size),
@@ -87,7 +100,7 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
             uint2{static_cast<uint>(w_coord),
                   static_cast<uint>(i + k_tile_size)},
             intel::cacheopts::LSC_LDCC_L1C_L3C);
-      }
+      }*/
 
       acc_registers = __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
           16, a_tile, b_tile, acc_registers,
