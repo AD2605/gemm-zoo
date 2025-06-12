@@ -48,9 +48,12 @@ void benchmark_kernel(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
   std::vector<InputSharedPtr> b_pointers;
   std::vector<OutputSharedPtr> c_pointers;
   OutputSharedPtr output_d_pointer;  // Just use one to pointer for the result
+  OutputSharedPtr output_d_ref_pointer;
 
   output_d_pointer = OutputSharedPtr(sycl::malloc_device<TOut>(m * n, queue),
                                      output_memory_deleter);
+  output_d_ref_pointer = OutputSharedPtr(
+      sycl::malloc_device<TOut>(m * n, queue), output_memory_deleter);
   for (std::size_t i = 0; i < min_repitions_required; i++) {
     a_pointers.emplace_back(std::move(InputSharedPtr(
         sycl::malloc_device<TIn>(m * k, queue), input_memory_deleter)));
@@ -74,9 +77,10 @@ void benchmark_kernel(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
          output_d_pointer.get(), alpha, beta, queue)
       .wait_and_throw();
   test::compute_reference(a_pointers[0].get(), b_pointers[0].get(),
-                          c_pointers[0].get(), m, n, k, alpha, beta, queue);
-  if (!test::compare_results(output_d_pointer.get(), c_pointers[0].get(), m * n,
-                             queue)) {
+                          c_pointers[0].get(), output_d_ref_pointer.get(), m, n,
+                          k, alpha, beta, queue);
+  if (!test::compare_results(output_d_pointer.get(), output_d_ref_pointer.get(),
+                             m * n, queue)) {
     throw std::runtime_error("verification failed");
   }
 
@@ -114,8 +118,8 @@ template <typename Kernel, typename TIn, typename TOut>
 void benchmark_sizes(
     const std::vector<std::tuple<std::size_t, std::size_t, std::size_t>>& sizes,
     sycl::queue& queue, const int num_repititions = 50) {
-  const TOut alpha = 3.0f;
-  const TOut beta = 2.0f;
+  const TOut alpha = static_cast<TOut>(1.0f);
+  const TOut beta = static_cast<TOut>(1.0f);
 
   for (const auto [m, n, k] : sizes) {
     detail::benchmark_kernel<Kernel, TIn, TOut>(m, n, k, alpha, beta,
