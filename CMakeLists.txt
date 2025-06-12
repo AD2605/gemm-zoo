@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(TARGET_ARCH intel_gpu_bmg_g21 CACHE STRING "architecture to target")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/oneMath.cmake)
+find_package(DNNL REQUIRED)
 
 file(GLOB_RECURSE BENCHMARKS
     CONFIGURE_DEPENDS
@@ -22,6 +23,6 @@ foreach(BENCH_SOURCE ${BENCHMARKS})
     add_dependencies(${BENCH_NAME} oneMath)
     target_compile_options(${BENCH_NAME} PUBLIC "${COMPILE_FLAGS}")
     target_link_options(${BENCH_NAME} PUBLIC "${COMPILE_FLAGS}")
-    target_include_directories(${BENCH_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ONEMATH_INSTALL_DIR}/include)
-    target_link_libraries(${BENCH_NAME} PRIVATE ${ONEMATH_LIB})
+    target_include_directories(${BENCH_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${ONEMATH_INSTALL_DIR}/include)
+    target_link_libraries(${BENCH_NAME} PRIVATE ${ONEMATH_LIB} DNNL::dnnl)
 endforeach()
