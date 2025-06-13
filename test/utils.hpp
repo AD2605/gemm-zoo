@@ -14,7 +14,16 @@
 #include <oneapi/math/rng/device.hpp>
 #include <type_traits>
 
+#include <sycl/sycl.hpp>
+
 namespace test {
+
+template <typename T>
+constexpr bool is_signed() {
+  return std::is_signed_v<T> || std::is_same_v<T, sycl::half> ||
+         std::is_same_v<T, sycl::ext::oneapi::bfloat16>;
+}
+
 template <typename T>
 sycl::event populate_with_random(T* device_ptr, std::size_t num_elements,
                                  sycl::queue& queue,
@@ -23,7 +32,7 @@ sycl::event populate_with_random(T* device_ptr, std::size_t num_elements,
     cgh.parallel_for(num_elements, [=](std::size_t element_id) {
       using namespace oneapi::math::rng::device;
       philox4x32x10<> engine(seed, element_id);
-      const float min_value = std::is_signed_v<T> ? -10.0F : 1.0F;
+      const float min_value = is_signed<T>() ? -10.0F : 1.0F;
       uniform<float> distribution(min_value, 10.0F);
       // something I picked up from cutlass, create random numbers with exact
       // zeros so that one needn't bother with threshold value during testing.
