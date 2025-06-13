@@ -63,6 +63,28 @@ bool compare_results(const T* output, const T* reference,
   return is_passed;
 }
 
+template <typename T>
+dnnl::memory::data_type dnnl_memory_data_type() {
+  if constexpr (std::is_same_v<T, float>) {
+    return dnnl::memory::data_type::f32;
+  }
+  if constexpr (std::is_same_v<T, sycl::half>) {
+    return dnnl::memory::data_type::f16;
+  }
+  if constexpr (std::is_same_v<T, sycl::ext::oneapi::bfloat16>) {
+    return dnnl::memory::data_type::bf16;
+  }
+  if constexpr (std::is_same_v<T, int32_t>) {
+    return dnnl::memory::data_type::s32;
+  }
+  if constexpr (std::is_same_v<T, int8_t>) {
+    return dnnl::memory::data_type::s8;
+  }
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    return dnnl::memory::data_type::u8;
+  }
+}
+
 template <typename TIn, typename TOut>
 void compute_reference(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                        int m, int n, int k, const TOut alpha, const TOut beta,
