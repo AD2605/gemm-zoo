@@ -15,9 +15,12 @@ struct SPIRV_MMAOperands {
   static constexpr int SPIRV_MatrixCBf16 = 0xC;
   static constexpr int SPIRV_MatrixATf32 = 0x100;
   static constexpr int SPIRV_MatrixBTf32 = 0x200;
+  static constexpr int SPIRV_ResultMatrixBf16 = 0x8;
 };
 
 SYCL_EXTERNAL intel::float8 __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
     int32_t, intel::short8, intel::int8, intel::float8, int32_t);
+SYCL_EXTERNAL intel::short8 __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
+    int32_t, intel::short8, intel::int8, intel::short8, int32_t);
 
 #endif

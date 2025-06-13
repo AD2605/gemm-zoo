@@ -1,11 +1,9 @@
-#ifndef INTEL_KERNELS_GEMM_BF16_BF16_F32_M8k16_HPP
-#define INTEL_KERNELS_GEMM_BF16_BF16_F32_M8k16_HPP
+#ifndef INTEL_XE_GEMM_BF16_BF16_BF16_M8K16_HPP
+#define INTEL_XE_GEMM_BF16_BF16_BF16_M8K16_HPP
 
 #include "intel/builtins.hpp"
 #include "intel/cacheopts.hpp"
 #include "intel/spirv_mma.hpp"
-
-#include "intel/defines.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,12 +15,13 @@
 namespace intel {
 namespace kernels {
 using bf16_t = sycl::ext::oneapi::bfloat16;
-INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
-                                     const float* c, float* d, std::size_t m,
-                                     std::size_t n, std::size_t k, float alpha,
-                                     float beta, const sycl::nd_item<1>& it) {
+INLINE void gemm_bf16_bf16_bf16_m8k16(const bf16_t* a, const bf16_t* b,
+                                      const bf16_t* c, bf16_t* d, std::size_t m,
+                                      std::size_t n, std::size_t k,
+                                      bf16_t alpha, bf16_t beta,
+                                      const sycl::nd_item<1>& it) {
 #ifdef __SYCL_DEVICE_ONLY__
-  using float8 = sycl::vec<float, 8>;
+  using bf16_t_8 = sycl::vec<bf16_t, 8>;
   // each sub-group will be be responsible for a block of 8x16 tile of C Matrix;
   auto num_sgs_in_wg =
       it.get_local_range(0) / 16;  // as sub-group size will be 16;
@@ -41,9 +40,9 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
   std::size_t a_matrix_width = (k - 1) * sizeof(bf16_t);  // also equal to pitch
   std::size_t b_matrix_width = (n - 1) * sizeof(bf16_t);
 
-  std::size_t result_matrix_width = (n - 1) * sizeof(float);
+  std::size_t result_matrix_width = (n - 1) * sizeof(bf16_t);
 
-  intel::float8 acc_registers;
+  intel::short8 acc_registers;
   for (; sg_id < total_tiles; sg_id += num_sgs_in_kernel) {
     auto h_coord = (sg_id / blocks_per_row) * block_height;
     auto w_coord = (sg_id % blocks_per_row) * block_width;
@@ -52,6 +51,7 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
     for (uint8_t i = 0; i < 8; i++) {
       acc_registers[i] = 0;
     }
+
     for (int i = 0; i < k; i += k_tile_size) {
       intel::short8 a_tile = __builtin_IB_subgroup_block_read_flat_u16_m8k16v1(
           (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
@@ -77,20 +77,22 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
       acc_registers = __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
           16, a_tile, b_tile, acc_registers,
           SPIRV_MMAOperands::SPIRV_MatrixABf16 |
-              SPIRV_MMAOperands::SPIRV_MatrixBBf16);
+              SPIRV_MMAOperands::SPIRV_MatrixBBf16 |
+              SPIRV_MMAOperands::SPIRV_MatrixCBf16);
     }
-    auto c_tile_uint = __builtin_IB_subgroup_block_read_flat_u32_m8k16v1(
+    auto c_tile_uint = __builtin_IB_subgroup_block_read_flat_u16_m8k16v1(
         (intptr_t)(c), result_matrix_width, m - 1, result_matrix_width,
         uint2{static_cast<uint>(w_coord), static_cast<uint>(h_coord)});
-    float8 c_tile = *reinterpret_cast<float8*>(&c_tile_uint);
+    bf16_t_8 c_tile = *reinterpret_cast<bf16_t_8*>(&c_tile_uint);
+    bf16_t_8 acc_bf16_t = *reinterpret_cast<bf16_t_8*>(&acc_registers);
 #pragma unroll(8)
     for (uint8_t i = 0; i < 8; i++) {
-      acc_registers[i] = alpha * acc_registers[i] + beta * c_tile[i];
+      acc_bf16_t[i] = alpha * acc_bf16_t[i] + beta * c_tile[i];
     }
-    __builtin_IB_subgroup_block_write_flat_u32_m8k16v1(
+    __builtin_IB_subgroup_block_write_flat_u16_m8k16v1(
         (intptr_t)(d), result_matrix_width, m - 1, result_matrix_width,
         uint2{static_cast<uint>(w_coord), static_cast<uint>(h_coord)},
-        *reinterpret_cast<intel::uint8*>(&acc_registers));
+        *reinterpret_cast<intel::short8*>(&acc_bf16_t));
   }
 #endif
 }

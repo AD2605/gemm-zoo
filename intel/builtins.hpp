@@ -31,6 +31,9 @@ SYCL_DEVICE_BUILTIN(
 SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_write_flat_u32_m8k16v1(
     intptr_t baseoffset, int width_minus_one, int height_minus_one,
     int pitch_minus_one, intel::uint2 coord, intel::uint8 data));
+SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_write_flat_u16_m8k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one,
+    int pitch_minus_one, intel::uint2 coord, intel::short8 data));
 
 // prefetches
 SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
