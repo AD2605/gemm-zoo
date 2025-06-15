@@ -22,5 +22,7 @@ SYCL_EXTERNAL intel::float8 __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
     int32_t, intel::short8, intel::int8, intel::float8, int32_t);
 SYCL_EXTERNAL intel::short8 __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
     int32_t, intel::short8, intel::int8, intel::short8, int32_t);
+SYCL_EXTERNAL intel::int8 __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
+    int32_t, intel::short8, intel::int8, intel::int8, int32_t);
 
 #endif
