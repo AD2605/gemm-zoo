@@ -32,7 +32,7 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
 
   constexpr int block_height = 8;
   constexpr int block_width = 16;
-  constexpr int k_tile_size = 16;
+  constexpr int k_tile_size = 32;
 
   const int blocks_per_row = (n + block_width - 1) / block_width;
   const int blocks_per_col = (m + block_height - 1) / block_height;
@@ -52,33 +52,52 @@ INLINE void gemm_bf16_bf16_f32_m8k16(const bf16_t* a, const bf16_t* b,
     for (uint8_t i = 0; i < 8; i++) {
       acc_registers[i] = 0;
     }
+
+    short8 a_tile_0;
+    short8 a_tile_1;
+
+    short16 b_tile_0;
+    short16 b_tile_1;
+
     for (int i = 0; i < k; i += k_tile_size) {
-      intel::short8 a_tile = __builtin_IB_subgroup_block_read_flat_u16_m8k16v1(
+      intel::short16 a_tile = __builtin_IB_subgroup_block_read_flat_u16_m8k32v1(
           (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
           uint2{static_cast<uint>(i), static_cast<uint>(h_coord)});
-      intel::int8 b_tile =
-          __builtin_IB_subgroup_block_read_flat_transform_u16_k16(
+      intel::short32 b_tile =
+          __builtin_IB_subgroup_block_read_flat_u16_m32k16v1(
               (intptr_t)(b), b_matrix_width, k - 1, b_matrix_width,
               uint2{static_cast<uint>(w_coord), static_cast<uint>(i)});
 
-      if ((i + k_tile_size) < k) {
-        __builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
-            (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
-            uint2{static_cast<uint>(i + k_tile_size),
-                  static_cast<uint>(h_coord)},
-            intel::cacheopts::LSC_LDCC_L1C_L3C);
-        __builtin_IB_subgroup_block_read_prefetch_transform_u16_k16(
-            (intptr_t)(b), b_matrix_width, k - 1, b_matrix_width,
-            uint2{static_cast<uint>(w_coord),
-                  static_cast<uint>(i + k_tile_size)},
-            intel::cacheopts::LSC_LDCC_L1C_L3C);
+      // prepare the two a tiles and b_tiles for dpas;
+// I would expect all these index calculations to be constexpr and branchless
+#pragma unroll(16)
+      for (uint8_t i = 0; i < 16; i++) {
+        if (i % 2 == 0) {
+          a_tile_0[i / 2] = a_tile[i];
+        } else {
+          a_tile_1[i / 2] = a_tile[i];
+        }
+      }
+
+#pragma unroll(32)
+      for (uint8_t i = 0; i < 32; i++) {
+        if (i / 16 == 0) {
+          b_tile_0[i] = b_tile[i];
+        } else {
+          b_tile_1[i % 16] = b_tile[i];
+        }
       }
 
       acc_registers = __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
-          16, a_tile, b_tile, acc_registers,
+          16, a_tile_0, *reinterpret_cast<int8*>(&b_tile_0), acc_registers,
+          SPIRV_MMAOperands::SPIRV_MatrixABf16 |
+              SPIRV_MMAOperands::SPIRV_MatrixBBf16);
+      acc_registers = __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
+          16, a_tile_1, *reinterpret_cast<int8*>(&b_tile_1), acc_registers,
           SPIRV_MMAOperands::SPIRV_MatrixABf16 |
               SPIRV_MMAOperands::SPIRV_MatrixBBf16);
     }
+
     auto c_tile_uint = __builtin_IB_subgroup_block_read_flat_u32_m8k16v1(
         (intptr_t)(c), result_matrix_width, m - 1, result_matrix_width,
         uint2{static_cast<uint>(w_coord), static_cast<uint>(h_coord)});
