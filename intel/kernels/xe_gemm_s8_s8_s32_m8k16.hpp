@@ -52,12 +52,12 @@ INLINE void xe_gemm_s8_s8_s32_m8k16(const int8_t* a, const int8_t* b,
       auto a_tile = __builtin_IB_subgroup_block_read_flat_u8_m8k32v1(
           (intptr_t)(a), a_matrix_width, m - 1, a_matrix_width,
           uint2{static_cast<uint>(i), static_cast<uint>(h_coord)});
-      auto b_tile = __builtin_IB_subgroup_block_read_flat_transform_u8_m32k16v1(
+      auto b_tile = __builtin_IB_subgroup_block_read_flat_u8_m32k16v1(
           (intptr_t)(b), b_matrix_width, k - 1, b_matrix_width,
           uint2{static_cast<uint>(w_coord), static_cast<uint>(i)});
 
       acc_registers = __spirv_SubgroupMatrixMultiplyAccumulateINTEL(
-          16, a_tile, b_tile, acc_registers,
+          16, a_tile, *reinterpret_cast<intel::int8*>(&b_tile), acc_registers,
           SPIRV_MMAOperands::SPIRV_MatrixAInt8 |
               SPIRV_MMAOperands::SPIRV_MatrixBInt8);
     }
