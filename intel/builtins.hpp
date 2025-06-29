@@ -17,15 +17,23 @@ SYCL_DEVICE_BUILTIN(
         intptr_t baseoffset, int width_minus_one, int height_minus_one,
         int pitch_minus_one, intel::uint2 coord));
 SYCL_DEVICE_BUILTIN(
-    intel::int8 __builtin_IB_subgroup_block_read_flat_u32_m8k16v1(
-        intptr_t baseoffset, int width_minus_one, int height_minus_one,
-        int pitch_minus_one, intel::uint2 coord));
-SYCL_DEVICE_BUILTIN(
     intel::short8 __builtin_IB_subgroup_block_read_flat_u8_m8k32v1(
         intptr_t baseoffset, int width_minus_one, int height_minus_one,
         int pitch_minus_one, intel::uint2 coord));
 SYCL_DEVICE_BUILTIN(
+    intel::short16 __builtin_IB_subgroup_block_read_flat_u16_m8k32v1(
+        intptr_t baseoffset, int width_minus_one, int height_minus_one,
+        int pitch_minus_one, intel::uint2 coord));
+SYCL_DEVICE_BUILTIN(
     intel::char32 __builtin_IB_subgroup_block_read_flat_u8_m32k16v1(
+        intptr_t baseoffset, int width_minus_one, int height_minus_one,
+        int pitch_minus_one, intel::uint2 coord));
+SYCL_DEVICE_BUILTIN(
+    intel::short32 __builtin_IB_subgroup_block_read_flat_u16_m32k16v1(
+        intptr_t baseoffset, int width_minus_one, int height_minus_one,
+        int pitch_minus_one, intel::uint2 coord));
+SYCL_DEVICE_BUILTIN(
+    intel::int8 __builtin_IB_subgroup_block_read_flat_u32_m8k16v1(
         intptr_t baseoffset, int width_minus_one, int height_minus_one,
         int pitch_minus_one, intel::uint2 coord));
 
@@ -33,10 +41,6 @@ SYCL_DEVICE_BUILTIN(
 SYCL_DEVICE_BUILTIN(
     intel::int8 __builtin_IB_subgroup_block_read_flat_transform_u16_k16(
         long baseoffset, int width_minus_one, int height_minus_one,
-        int pitch_minus_one, intel::uint2 coord));
-SYCL_DEVICE_BUILTIN(
-    intel::int8 __builtin_IB_subgroup_block_read_flat_transform_u8_m32k16v1(
-        intptr_t baseoffset, int width_minus_one, int height_minus_one,
         int pitch_minus_one, intel::uint2 coord));
 
 // write
@@ -54,6 +58,14 @@ SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m8k16v1(
     intel::cacheopts::LSC_LDCC cacheOpt));
 SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m16k16v1(
     long baseoffset, int width_minus_one, int height_minus_one,
+    int pitch_minus_one, intel::uint2 coord,
+    intel::cacheopts::LSC_LDCC cacheOpt));
+SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m8k32v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one,
+    int pitch_minus_one, intel::uint2 coord,
+    intel::cacheopts::LSC_LDCC cacheOpt));
+SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m32k16v1(
+    intptr_t baseoffset, int width_minus_one, int height_minus_one,
     int pitch_minus_one, intel::uint2 coord,
     intel::cacheopts::LSC_LDCC cacheOpt));
 
