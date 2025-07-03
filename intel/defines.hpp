@@ -36,6 +36,7 @@ using uint8 = vector_t<uint, 8>;
 using uint4 = vector_t<uint, 4>;
 using uint2 = vector_t<uint, 2>;
 
+using short64 = vector_t<short, 64>;
 using short32 = vector_t<short, 32>;
 using short16 = vector_t<short, 16>;
 using short8 = vector_t<short, 8>;
@@ -43,6 +44,7 @@ using short4 = vector_t<short, 4>;
 
 using int8 = vector_t<int, 8>;
 
+using float64 = vector_t<float, 64>;
 using float8 = vector_t<float, 8>;
 
 }  // namespace intel
