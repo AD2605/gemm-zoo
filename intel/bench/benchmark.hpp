@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <ctime>
 #include <memory>
 #include <ratio>
 #include <stdexcept>
@@ -20,7 +21,6 @@
 namespace benchmark {
 
 namespace detail {
-
 template <typename Kernel, typename TIn, typename TOut>
 void benchmark_kernel(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
                       TOut beta, const int num_repititions,
