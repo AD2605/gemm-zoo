@@ -33,6 +33,12 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
   const int total_tiles = M_tiles * N_tiles;
 
   auto block_id = blockIdx.x;
+  const int row_num = threadIdx.x / SubTile_H;
+  const int col_num = threadIdx.x % 32;
+
+  int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem_a));
+  int32_t smem_b_addr = smem_a_addr + M * K * sizeof(TIn);
+
   for (; block_id < total_tiles; block_id += gridDim.x) {
     for (int i = 0; i < M_regs * N_regs; i++) {
       acc[i] = 0;
@@ -40,17 +46,26 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
 
-    const int row_num = threadIdx.x / SubTile_H;
-
     for (int K_tile = 0; K_tile < k; K_tile += K) {
       // load a_tile;
 #pragma unroll
       for (int i = 0; i < M; i += SubTile_H) {
 #pragma unroll
-        for (int j = 0; j < K; j += SubTile_W) {
-          auto offset = (tile_row_start * M + row_num + i) * k + j +
-                        threadIdx.x % 32 + K_tile;
-          smem_a[(row_num + i) * K + j + threadIdx.x % 32] = a[offset];
+        for (int j = 0; j < K; j += SubTile_W * 4) {
+          auto offset =
+              (tile_row_start * M + row_num + i) * k + j + col_num * 4 + K_tile;
+          asm volatile(
+              "{\n\t"
+              ".reg .f32 v0, v1, v2, v3; \n\t"
+              "ld.global.v4.f32 {v0, v1, v2, v3}, [%0]; \n\t"
+              "st.shared.v4.f32 [%1], {v0, v1, v2, v3}; \n"
+              "}"
+              :
+              : "l"(a + offset),
+                "r"(smem_a_addr +
+                    static_cast<int32_t>(((row_num + i) * K + j + col_num * 4) *
+                                         sizeof(TIn)))
+              : "memory");
         }
       }
 
@@ -58,18 +73,26 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
 #pragma unroll
       for (int i = 0; i < K; i += SubTile_H) {
 #pragma unroll
-        for (int j = 0; j < N; j += SubTile_W) {
-          auto offset = (K_tile + row_num + i) * n + j + threadIdx.x % 32 +
-                        tile_col_start * N;
-          smem_b[(row_num + i) * N + j + threadIdx.x % 32] = b[offset];
+        for (int j = 0; j < N; j += SubTile_W * 4) {
+          auto offset =
+              (K_tile + row_num + i) * n + j + col_num * 4 + tile_col_start * N;
+          asm volatile(
+              "{\n\t"
+              ".reg .f32 v0, v1, v2, v3; \n\t"
+              "ld.global.v4.f32 {v0, v1, v2, v3}, [%0]; \n\t"
+              "st.shared.v4.f32 [%1], {v0, v1, v2, v3}; \n"
+              "}"
+              :
+              : "l"(b + offset),
+                "r"(smem_b_addr +
+                    static_cast<int32_t>(((row_num + i) * N + j + col_num * 4) *
+                                         sizeof(TIn)))
+              : "memory");
         }
       }
 
       __syncthreads();
 
-      // if I have  M * N worth of data to be spread between 1024 threads, each
-      // thread gets M * N / 1024; but since I also have to maintain coalesced
-      // writes, they'll be spread with a weird stride of 32;
 #pragma unroll
       for (int ii = 0; ii < M; ii += SubTile_H) {
         auto smem_a_row_offset = (ii + row_num) * K;
