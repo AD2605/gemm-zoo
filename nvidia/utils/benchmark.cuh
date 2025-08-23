@@ -5,7 +5,6 @@
 #include "cublaslt_gemm.cuh"
 #include "defines.hpp"
 #include "fill_data.cuh"
-#include "kernel_functors/naive_gemm.cuh"
 
 #include <cstddef>
 #include <cuda_runtime.h>
