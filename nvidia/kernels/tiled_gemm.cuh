@@ -61,7 +61,7 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
         for (int j = 0; j < N; j += SubTile_W) {
           auto offset = (K_tile + row_num + i) * n + j + threadIdx.x % 32 +
                         tile_col_start * N;
-          smem_b[(row_num + i) * K + j + threadIdx.x % 32] = b[offset];
+          smem_b[(row_num + i) * N + j + threadIdx.x % 32] = b[offset];
         }
       }
 
@@ -78,9 +78,8 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
           for (int jj = 0; jj < N; jj += SubTile_W) {
             const int acc_reg_offset =
                 (ii / SubTile_H) * N_regs + (jj / SubTile_W);
-            acc[acc_reg_offset] +=
-                smem_a[smem_a_row_offset + threadIdx.x % 32 + jj] *
-                smem_b[kk * N + jj + threadIdx.x % 32];
+            acc[acc_reg_offset] += smem_a[smem_a_row_offset + kk] *
+                                   smem_b[kk * N + jj + threadIdx.x % 32];
           }
         }
       }

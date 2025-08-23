@@ -13,11 +13,10 @@ namespace utils {
 template <typename T>
 __global__ void compare_results_kernel(const T* output, const T* reference,
                                        std::size_t num_elements,
-                                       int* is_different,
-                                       float tolerance = 1e-3F) {
+                                       int* is_different) {
   auto idx = threadIdx.x + blockIdx.x * blockDim.x;
   for (; idx < num_elements; idx += gridDim.x * blockDim.x) {
-    if (abs(output[idx] - reference[idx]) > tolerance) {
+    if (output[idx] != reference[idx]) {
 #ifdef DEBUG
       printf("%f %f %d \n", static_cast<float>(output[idx]),
              static_cast<float>(reference[idx]), idx);
