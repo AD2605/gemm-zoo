@@ -16,7 +16,6 @@ int main() {
   using kernel_functor_struct =
       nvidia::kernel_functors::smem_tiled_gemm<float, float, M, N, K>;
   benchmark::benchmark<kernel_functor_struct, float, float>(
-      {std::tuple{1024, 1024, 1024}, std::tuple{2048, 2048, 2048},
-       std::tuple{4096, 4096, 4096}},
-      alpha, beta);
+      {{1024, 1024, 1024}, {2048, 2048, 2048}, {4096, 4096, 4096}}, alpha,
+      beta);
 }

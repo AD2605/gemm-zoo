@@ -20,10 +20,6 @@ cudaDataType_t get_cubaslt_datatype() {
   throw std::runtime_error("Unsupported Datatype");
 }
 
-#include <cublasLt.h>
-#include <cuda_runtime.h>
-#include <stdexcept>
-
 template <typename TA, typename TB, typename TC, typename TD>
 void cublaslt_gemm(const TA* a, const TB* b, const TC* c, TD* d, int m, int n,
                    int k, TD alpha, TD beta) {

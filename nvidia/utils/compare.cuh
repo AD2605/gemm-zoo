@@ -32,10 +32,11 @@ void compare_results(const T* output, const T* reference,
   int* is_different;
   cudaMallocManaged(&is_different, sizeof(int));
   *is_different = 0;
-  dim3 blockDim(32, 0, 0);
+  dim3 blockDim(32, 1, 1);
   dim3 gridDim((num_elements + 32 - 1) / 32, 1, 1);
-  compare_results_kernel<<<blockDim, gridDim, 0, stream>>>(
+  compare_results_kernel<<<gridDim, blockDim, 0, stream>>>(
       output, reference, num_elements, is_different);
+  checkCudaError(cudaGetLastError());
   checkCudaError(cudaStreamSynchronize(stream));
   if (*is_different) {
     throw std::runtime_error("verification failed");

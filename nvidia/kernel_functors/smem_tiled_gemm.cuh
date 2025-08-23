@@ -25,7 +25,6 @@ struct smem_tiled_gemm {
     checkCudaError(cudaFuncSetAttribute(
         nvidia::kernels::smem_tiled_gemm<TIn, TOut, M, N, K>,
         cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size_required));
-
     auto num_sms = static_cast<std::size_t>(properties.multiProcessorCount);
     blockDim = dim3(1024, 1, 1);
     auto m_tiles_required = (m + M - 1) / M;
@@ -38,7 +37,7 @@ struct smem_tiled_gemm {
   void operator()(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                   const TOut alpha, const TOut beta, cudaStream_t stream) {
     nvidia::kernels::smem_tiled_gemm<TIn, TOut, M, N, K>
-        <<<blockDim, gridDim, smem_size_required, stream>>>(a, b, c, d, m, n, k,
+        <<<gridDim, blockDim, smem_size_required, stream>>>(a, b, c, d, m, n, k,
                                                             alpha, beta);
   }
 
