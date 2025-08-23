@@ -5,6 +5,7 @@
 #include "cublaslt_gemm.cuh"
 #include "defines.hpp"
 #include "fill_data.cuh"
+#include "kernel_functors/naive_gemm.cuh"
 
 #include <cstddef>
 #include <cuda_runtime.h>
@@ -54,10 +55,12 @@ void benchmark_impl(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
 
   kernel(a_matrices[0], b_matrices[0], c_matrices[0], d_out, alpha, beta,
          stream);
+  checkCudaError(cudaGetLastError());
   checkCudaError(cudaStreamSynchronize(stream));
 
   utils::cublaslt_gemm(a_matrices[0], b_matrices[0], c_matrices[0], d_ref, m, n,
                        k, alpha, beta);
+  checkCudaError(cudaGetLastError());
   cudaStreamSynchronize(stream);
 
   utils::compare_results(d_out, d_ref, m * n, stream);

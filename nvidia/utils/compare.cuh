@@ -13,10 +13,11 @@ namespace utils {
 template <typename T>
 __global__ void compare_results_kernel(const T* output, const T* reference,
                                        std::size_t num_elements,
-                                       int* is_different) {
+                                       int* is_different,
+                                       float tolerance = 1e-3F) {
   auto idx = threadIdx.x + blockIdx.x * blockDim.x;
   for (; idx < num_elements; idx += gridDim.x * blockDim.x) {
-    if (output[idx] != reference[idx]) {
+    if (abs(output[idx] - reference[idx]) > tolerance) {
 #ifdef DEBUG
       printf("%f %f %d \n", static_cast<float>(output[idx]),
              static_cast<float>(reference[idx]), idx);
@@ -32,10 +33,11 @@ void compare_results(const T* output, const T* reference,
   int* is_different;
   cudaMallocManaged(&is_different, sizeof(int));
   *is_different = 0;
-  dim3 blockDim(32, 0, 0);
+  dim3 blockDim(32, 1, 1);
   dim3 gridDim((num_elements + 32 - 1) / 32, 1, 1);
-  compare_results_kernel<<<blockDim, gridDim, 0, stream>>>(
+  compare_results_kernel<<<gridDim, blockDim, 0, stream>>>(
       output, reference, num_elements, is_different);
+  checkCudaError(cudaGetLastError());
   checkCudaError(cudaStreamSynchronize(stream));
   if (*is_different) {
     throw std::runtime_error("verification failed");
