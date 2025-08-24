@@ -1,13 +1,12 @@
 #ifndef NVIDIA_KERNELS_TILED_GEMM_CUH
 #define NVIDIA_KERNELS_TILED_GEMM_CUH
 
+#include "kernels/utils.cuh"
+
 #include <cstddef>
 #include <cuda_runtime.h>
 
 namespace nvidia::kernels {
-__device__ __host__ __forceinline__ int ceil_div(int dividend, int divisor) {
-  return (dividend + divisor - 1) / divisor;
-}
 
 template <typename TIn, typename TOut, int M, int N, int K>
 __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
@@ -28,8 +27,8 @@ __global__ void smem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
   constexpr int N_regs = N / 32;
   TIn acc[M_regs * N_regs] = {0.0f};
 
-  const int M_tiles = ceil_div(m, M);
-  const int N_tiles = ceil_div(n, N);
+  const int M_tiles = utils::ceil_div(m, M);
+  const int N_tiles = utils::ceil_div(n, N);
   const int total_tiles = M_tiles * N_tiles;
 
   auto block_id = blockIdx.x;
