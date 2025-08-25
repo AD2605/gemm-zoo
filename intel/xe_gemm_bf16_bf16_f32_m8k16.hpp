@@ -2,6 +2,7 @@
 #define INTEL_GEMM_BF16_BF16_F32_M8k16_HPP
 
 #include "intel/kernels/xe_gemm_bf16_bf16_f32_m8k16.hpp"
+#include "kernels/xe_gemm_bf16_bf16_f32_m32k32.hpp"
 #include "sycl/event.hpp"
 #include <cstddef>
 #include <sycl/sycl.hpp>
