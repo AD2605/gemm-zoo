@@ -1,6 +1,7 @@
 #ifndef INTEL_DEFINES_HPP
 #define INTEL_DEFINES_HPP
 
+#include <cstdint>
 #include <sys/types.h>
 
 namespace intel {
@@ -33,6 +34,7 @@ using vector_t = sycl::marray<T, N>;
 #endif
 
 using uint8 = vector_t<uint, 8>;
+using int8 = vector_t<int32_t, 8>;
 using uint4 = vector_t<uint, 4>;
 using uint2 = vector_t<uint, 2>;
 
@@ -41,7 +43,8 @@ using short16 = vector_t<short, 16>;
 using short8 = vector_t<short, 8>;
 using short4 = vector_t<short, 4>;
 
-using int8 = vector_t<int, 8>;
+using char16 = vector_t<char, 16>;
+using char32 = vector_t<char, 32>;
 
 using float8 = vector_t<float, 8>;
 
