@@ -8,28 +8,30 @@
 
 namespace nvidia::kernels {
 template <typename TIn, typename TOut, int M, int N, int K, int TM, int TN,
-          int TK>
-__global__ void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
-                                TOut* d, std::size_t m, std::size_t n,
-                                std::size_t k, TOut alpha, TOut beta) {
+          int TK, int BlockDim>
+__launch_bounds__(BlockDim) __global__
+    void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c, TOut* d,
+                         std::size_t m, std::size_t n, std::size_t k,
+                         TOut alpha, TOut beta) {
   static_assert(std::is_same_v<TIn, float>);
   static_assert(std::is_same_v<TOut, float>);
+
+  static_assert(K % 2 == 0);
+  //  static_assert(TM % 16 == 0);
+  static_assert(TN % 4 == 0);
+  static_assert(TK % 2 == 0);
+  static_assert(N % 128 == 0);
+  static_assert(BlockDim == 256);
 
   extern __shared__ char smem[];
   int32_t sizeof_TIn = static_cast<int32_t>(sizeof(TIn));
   int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn;
-
-  const int32_t row_num = threadIdx.x / 32;
-  const int32_t col_num = threadIdx.x % 32;
-
-  constexpr int SubTile_H = 32;
-  constexpr int SubTile_W = 32;
-
-  static_assert(M % SubTile_H == 0);
-  static_assert(N % SubTile_W == 0);
-
   int block_id = blockIdx.x;
+  int warp_id = threadIdx.x / 32;
+  constexpr int num_warps = BlockDim / 32;
+  constexpr int warp_size = 32;
+  const int thread_id = threadIdx.x % 32;
 
   TOut RmemD[TM * TN];
   TIn RmemA[TM * TK];
@@ -49,15 +51,34 @@ __global__ void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
 
-    for (int K_tile = 0; K_tile < k; K_tile += K) {
-      // first part stays exactly the same as smem_tiled_gemm.
-      // load a_tile;
+    // just hardcoded for now
+    for (int kk = 0; kk < k; kk += K) {
+      // Load SmemA tile
+      for (int m_warp = warp_id; m_warp < M; m_warp += num_warps) {
 #pragma unroll
-      for (int i = 0; i < M; i += SubTile_H) {
+        for (int k_warp = 0; k_warp < K; k_warp += warp_size * 2) {
+          auto col = k_warp + thread_id * 2;
+          auto gmem_offset = (tile_row_start * M + m_warp) * k + (kk + col);
+          auto smem_offset = (m_warp * K + col) * sizeof_TIn;
+          asm volatile(
+              "{\n\t"
+              ".reg .f32 v0, v1; \n\t"
+              "ld.global.ca.L2::256B.v2.f32 {v0, v1}, [%0]; \n\t"
+              "st.shared.v2.f32 [%1], {v0, v1}; \n"
+              "}"
+              :
+              : "l"(a + gmem_offset), "r"(smem_a_addr + smem_offset)
+              : "memory");
+        }
+      }
+
+      // Load SmemB Tile;
+      for (int k_warp = warp_id; k_warp < K; k_warp += num_warps) {
 #pragma unroll
-        for (int j = 0; j < K; j += SubTile_W * 4) {
-          auto offset =
-              (tile_row_start * M + row_num + i) * k + j + col_num * 4 + K_tile;
+        for (int n_warp = 0; n_warp < N; n_warp += warp_size * 4) {
+          auto col = n_warp + thread_id * 4;
+          auto gmem_offset = (kk + k_warp) * n + (tile_col_start * N + col);
+          auto smem_offset = (k_warp * N + col) * sizeof_TIn;
           asm volatile(
               "{\n\t"
               ".reg .f32 v0, v1, v2, v3; \n\t"
@@ -65,69 +86,31 @@ __global__ void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
               "st.shared.v4.f32 [%1], {v0, v1, v2, v3}; \n"
               "}"
               :
-              : "l"(a + offset),
-                "r"(smem_a_addr +
-                    ((row_num + i) * K + j + col_num * 4) * sizeof_TIn)
+              : "l"(b + gmem_offset), "r"(smem_b_addr + smem_offset)
               : "memory");
         }
       }
-
-      // load b_tile;
-#pragma unroll
-      for (int i = 0; i < K; i += SubTile_H) {
-#pragma unroll
-        for (int j = 0; j < N; j += SubTile_W * 4) {
-          auto offset =
-              (K_tile + row_num + i) * n + j + col_num * 4 + tile_col_start * N;
-          asm volatile(
-              "{\n\t"
-              ".reg .f32 v0, v1, v2, v3; \n\t"
-              "ld.global.ca.L2::256B.v4.f32 {v0, v1, v2, v3}, [%0]; \n\t"
-              "st.shared.v4.f32 [%1], {v0, v1, v2, v3}; \n"
-              "}"
-              :
-              : "l"(b + offset),
-                "r"(smem_b_addr +
-                    ((row_num + i) * N + j + col_num * 4) * sizeof_TIn)
-              : "memory");
-        }
-      }
-
       __syncthreads();
 
-      // now each warp is responsible for 2x128 output(this is the warp tile, M
-      // x N Ordering)
-      //  and each thread in a warp in responsible for 2x4 output (M x N
-      //  ordering); and thus each warp is responsible for 2 rows; thus we can
-      //  do output row = 2 x row_num; This kernel is implicity warp tiled. load
-      //  RmemA and RmemB;
-
-#pragma unroll
-      for (int kk = 0; kk < K; kk += TK) {
-// Load RMEMA register Tile, All threads in a warp will access the same
-// row position, but this should result in a warp level broadcast from shared
-// memory (hopefully)
+      for (int inner = 0; inner < K; inner += TK) {
 #pragma unroll
         for (int mm = 0; mm < TM; mm++) {
-          int32_t smem_a_offset = (row_num * TM + mm) * K + kk;
+          auto smem_row_offset = (warp_id * TM + mm) * K + inner;
 #pragma unroll
-          for (int k_thread = 0; k_thread < TK; k_thread += 4) {
+          for (int k_thread = 0; k_thread < TK; k_thread += 2) {
             asm volatile(
                 "{\n\t"
-                "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
+                "ld.shared.v2.f32 {%0, %1}, [%2]; \n"
                 "}"
                 : "=f"(RmemA[mm * TK + k_thread + 0]),
-                  "=f"(RmemA[mm * TK + k_thread + 1]),
-                  "=f"(RmemA[mm * TK + k_thread + 2]),
-                  "=f"(RmemA[mm * TK + k_thread + 3])
-                : "r"(smem_a_addr + (smem_a_offset + k_thread) * sizeof_TIn));
+                  "=f"(RmemA[mm * TK + k_thread + 1])
+                : "r"(smem_a_addr + (smem_row_offset + k_thread) * sizeof_TIn));
           }
         }
 
-// load B tile;
 #pragma unroll
         for (int k_thread = 0; k_thread < TK; k_thread++) {
-          int32_t smem_b_offset = (kk + k_thread) * N;
+          int32_t smem_b_offset = (inner + k_thread) * N;
 #pragma unroll
           for (int n_thread = 0; n_thread < TN; n_thread += 4) {
             asm volatile(
@@ -139,11 +122,11 @@ __global__ void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
                   "=f"(RmemB[k_thread * TN + n_thread + 2]),
                   "=f"(RmemB[k_thread * TN + n_thread + 3])
                 : "r"(smem_b_addr +
-                      (smem_b_offset + col_num * TN + n_thread) * sizeof_TIn));
+                      (smem_b_offset + thread_id * TN + n_thread) *
+                          sizeof_TIn));
           }
         }
 
-        // inner MMAs via outer product;
 #pragma unroll
         for (int k_thread = 0; k_thread < TK; k_thread++) {
 #pragma unroll
@@ -159,13 +142,15 @@ __global__ void rmem_tiled_gemm(const TIn* a, const TIn* b, const TOut* c,
       }
       __syncthreads();
     }
+
 #pragma unroll
     for (int m_thread = 0; m_thread < TM; m_thread++) {
+      auto row = warp_id * TM + m_thread;
 #pragma unroll
       for (int n_thread = 0; n_thread < TN; n_thread += 4) {
+        auto col = thread_id * TN + n_thread;
         auto output_offset =
-            (tile_row_start * M + row_num * TM + m_thread) * n +
-            tile_col_start * N + col_num * TN + n_thread;
+            (tile_row_start * M + row) * n + tile_col_start * N + col;
         asm volatile(
             "{\n\t"
             "ld.global.v4.f32 {%0, %1, %2, %3}, [%4]; \n"

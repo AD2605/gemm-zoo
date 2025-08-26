@@ -6,13 +6,13 @@
 #include <tuple>
 
 int main() {
-  constexpr int M = 64;
+  constexpr int M = 128;
   constexpr int N = 128;
-  constexpr int K = 128;
+  constexpr int K = 64;
 
-  constexpr int TM = 2;
+  constexpr int TM = 16;
   constexpr int TN = 4;
-  constexpr int TK = 4;
+  constexpr int TK = 2;
 
   float alpha = 1.0f;
   float beta = 1.0f;
