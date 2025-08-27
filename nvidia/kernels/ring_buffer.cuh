@@ -17,8 +17,9 @@ class smem_ring_buffer {
   }
 
   __device__ __host__ __forceinline__ int32_t get_current_buffer() {
-    return buffer_areas[head++];
+    int32_t addr = buffer_areas[head++];
     head = head % N;
+    return addr;
   }
 
  private:

@@ -28,10 +28,11 @@ __launch_bounds__(BlockDim) __global__
   constexpr int32_t sizeof_TIn = static_cast<int32_t>(sizeof(TIn));
   int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
-
-  ring_buffer::smem_ring_buffer<NumBuffers, M * K * sizeof_TIn> smem_a_buffer(
+  const int32_t SmemABufferSize = M * K * sizeof_TIn;
+  const int32_t SmemBBufferSize = K * N * sizeof_TIn;
+  ring_buffer::smem_ring_buffer<NumBuffers, SmemABufferSize> smem_a_buffer(
       smem_a_addr);
-  ring_buffer::smem_ring_buffer<NumBuffers, K * N * sizeof_TIn> smem_b_buffer(
+  ring_buffer::smem_ring_buffer<NumBuffers, SmemBBufferSize> smem_b_buffer(
       smem_b_addr);
 
   int block_id = blockIdx.x;
@@ -107,14 +108,14 @@ __launch_bounds__(BlockDim) __global__
         for (int mm = 0; mm < TM; mm++) {
           auto smem_row_offset = (warp_id * TM + mm) * K + inner;
 #pragma unroll
-          for (int k_thread = 0; k_thread < TK; k_thread += 2) {
+          for (int k_thread = 0; k_thread < TK; k_thread++) {
             asm volatile(
                 "{\n\t"
-                "ld.shared.v2.f32 {%0, %1}, [%2]; \n"
+                "ld.shared.f32 %0, [%1]; \n"
                 "}"
-                : "=f"(RmemA[mm * TK + k_thread + 0]),
-                  "=f"(RmemA[mm * TK + k_thread + 1])
-                : "r"(smem_a_addr + (smem_row_offset + k_thread) * sizeof_TIn));
+                : "=f"(RmemA[mm * TK + k_thread])
+                : "r"(smem_a_k_addr +
+                      (smem_row_offset + k_thread) * sizeof_TIn));
           }
         }
 
@@ -131,7 +132,7 @@ __launch_bounds__(BlockDim) __global__
                   "=f"(RmemB[k_thread * TN + n_thread + 1]),
                   "=f"(RmemB[k_thread * TN + n_thread + 2]),
                   "=f"(RmemB[k_thread * TN + n_thread + 3])
-                : "r"(smem_b_addr +
+                : "r"(smem_b_k_addr +
                       (smem_b_offset + thread_id * TN + n_thread) *
                           sizeof_TIn));
           }
