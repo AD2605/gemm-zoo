@@ -30,10 +30,6 @@ __launch_bounds__(BlockDim) __global__
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
   const int32_t SmemABufferSize = M * K * sizeof_TIn;
   const int32_t SmemBBufferSize = K * N * sizeof_TIn;
-  ring_buffer::smem_ring_buffer<NumBuffers, SmemABufferSize> smem_a_buffer(
-      smem_a_addr);
-  ring_buffer::smem_ring_buffer<NumBuffers, SmemBBufferSize> smem_b_buffer(
-      smem_b_addr);
 
   int block_id = blockIdx.x;
   int warp_id = threadIdx.x / 32;
@@ -58,13 +54,12 @@ __launch_bounds__(BlockDim) __global__
 
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
+    int32_t buffer_index = 0;
 
     // just hardcoded for now
     for (int kk = 0; kk < k; kk += K) {
-      auto smem_a_k_addr = smem_a_buffer.get_current_buffer();
-      smem_a_buffer.pop();
-      auto smem_b_k_addr = smem_b_buffer.get_current_buffer();
-      smem_b_buffer.pop();
+      auto smem_a_k_addr = smem_a_addr + buffer_index * M * K * sizeof_TIn;
+      auto smem_b_k_addr = smem_b_addr + buffer_index * K * N * sizeof_TIn;
 
       // Load SmemA tile
       for (int m_warp = warp_id; m_warp < M; m_warp += num_warps) {
@@ -105,6 +100,7 @@ __launch_bounds__(BlockDim) __global__
       }
       __syncthreads();
 
+#pragma unroll
       for (int inner = 0; inner < K; inner += TK) {
 #pragma unroll
         for (int mm = 0; mm < TM; mm++) {
@@ -156,6 +152,7 @@ __launch_bounds__(BlockDim) __global__
           }
         }
       }
+      buffer_index = (buffer_index + 1) % NumBuffers;
     }
 
 #pragma unroll
