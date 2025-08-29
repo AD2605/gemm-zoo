@@ -74,13 +74,10 @@ __launch_bounds__(BlockDim) __global__
   constexpr int32_t sizeof_TIn = static_cast<int32_t>(sizeof(TIn));
   int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
-  const int32_t SmemABufferSize = M * K * sizeof_TIn;
-  const int32_t SmemBBufferSize = K * N * sizeof_TIn;
 
   int block_id = blockIdx.x;
   int warp_id = threadIdx.x / 32;
   constexpr int num_warps = BlockDim / 32;
-  constexpr int warp_size = 32;
   const int thread_id = threadIdx.x % 32;
 
   TOut RmemD[TM * TN];

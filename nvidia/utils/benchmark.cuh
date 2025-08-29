@@ -88,8 +88,8 @@ void benchmark_impl(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
   float achieved_flops =
       (static_cast<float>(flops_per_problem) * 1e-9) / average_time_in_seconds;
 
-  printf("GEMM Problem: [m: %lu n: %lu k: %lu], GFLOPS: %f: \n", m, n, k,
-         achieved_flops);
+  printf("GEMM Problem: [m: %lu n: %lu k: %lu], GFLOPS: %f  Time in ms: %f\n",
+         m, n, k, achieved_flops, (total_time / min_repitions_required));
 
   cudaFree(d_out);
   cudaFree(d_ref);
