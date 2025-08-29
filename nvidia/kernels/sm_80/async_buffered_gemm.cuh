@@ -76,10 +76,6 @@ __launch_bounds__(BlockDim) __global__
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
   const int32_t SmemABufferSize = M * K * sizeof_TIn;
   const int32_t SmemBBufferSize = K * N * sizeof_TIn;
-  ring_buffer::smem_ring_buffer<NumBuffers, SmemABufferSize> smem_a_buffer(
-      smem_a_addr);
-  ring_buffer::smem_ring_buffer<NumBuffers, SmemBBufferSize> smem_b_buffer(
-      smem_b_addr);
 
   int block_id = blockIdx.x;
   int warp_id = threadIdx.x / 32;
@@ -105,21 +101,23 @@ __launch_bounds__(BlockDim) __global__
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
 
+    int head = 0;
+    int tail = 0;
+
     // start the transfer of all the buffers;
     int k_load_index = 0;
 #pragma unroll(NumBuffers)
     for (int i = 0; i < NumBuffers; i++) {
       if (k_load_index < k) {
         detail::async_populate_smemA_buffer<M, K, TIn>(
-            smem_a_buffer.get_tail_buffer(), a, num_warps, warp_id, thread_id,
+            smem_a_addr + tail * M * K  * sizeof_TIn, a, num_warps, warp_id, thread_id,
             tile_row_start, k_load_index, k);
-        smem_a_buffer.push();
         detail::async_populate_smemB_buffer<K, N, TIn>(
-            smem_b_buffer.get_tail_buffer(), b, num_warps, warp_id, thread_id,
+            smem_b_addr + tail * K * N * sizeof_TIn, b, num_warps, warp_id, thread_id,
             tile_col_start, k_load_index, n);
-        smem_b_buffer.push();
         asm volatile("cp.async.commit_group;\n");
         k_load_index += K;
+        tail = (tail + 1) %  NumBuffers;
       }
     }
 
@@ -127,8 +125,8 @@ __launch_bounds__(BlockDim) __global__
       asm volatile("cp.async.wait_group 1; \n");
       __syncthreads();
 
-      int32_t smem_a_k_addr = smem_a_buffer.get_current_buffer();
-      int32_t smem_b_k_addr = smem_b_buffer.get_current_buffer();
+      int32_t smem_a_k_addr = smem_a_addr + head * M * K * sizeof_TIn;
+      int32_t smem_b_k_addr = smem_b_addr + head * K * N * sizeof_TIn;
 
 #pragma unroll
       for (int inner = 0; inner < K; inner += TK) {
@@ -184,21 +182,19 @@ __launch_bounds__(BlockDim) __global__
       }
       __syncthreads();
 
-      smem_a_buffer.pop();
-      smem_b_buffer.pop();
+      head = (head + 1) % NumBuffers;
 
       // populate the (k + 3)th buffer;
       if (k_load_index < k) {
         detail::async_populate_smemA_buffer<M, K, TIn>(
-            smem_a_buffer.get_tail_buffer(), a, num_warps, warp_id, thread_id,
+            smem_a_addr + tail * M * K  * sizeof_TIn, a, num_warps, warp_id, thread_id,
             tile_row_start, k_load_index, k);
-        smem_a_buffer.push();
         detail::async_populate_smemB_buffer<K, N, TIn>(
-            smem_b_buffer.get_tail_buffer(), b, num_warps, warp_id, thread_id,
+            smem_b_addr + tail * K * N * sizeof_TIn, b, num_warps, warp_id, thread_id,
             tile_col_start, k_load_index, n);
-        smem_b_buffer.push();
         asm volatile("cp.async.commit_group;\n");
         k_load_index += K;
+        tail = (tail + 1) %  NumBuffers;
       }
     }
 
