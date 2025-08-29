@@ -97,13 +97,15 @@ __launch_bounds__(BlockDim) __global__
         for (int mm = 0; mm < TM; mm++) {
           auto smem_row_offset = (warp_id * TM + mm) * K + inner;
 #pragma unroll
-          for (int k_thread = 0; k_thread < TK; k_thread += 2) {
+          for (int k_thread = 0; k_thread < TK; k_thread += 4) {
             asm volatile(
                 "{\n\t"
-                "ld.shared.v2.f32 {%0, %1}, [%2]; \n"
+                "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
                 "}"
                 : "=f"(RmemA[mm * TK + k_thread + 0]),
-                  "=f"(RmemA[mm * TK + k_thread + 1])
+                  "=f"(RmemA[mm * TK + k_thread + 1]),
+                  "=f"(RmemA[mm * TK + k_thread + 2]),
+                  "=f"(RmemA[mm * TK + k_thread + 3])
                 : "r"(smem_a_addr + (smem_row_offset + k_thread) * sizeof_TIn));
           }
         }

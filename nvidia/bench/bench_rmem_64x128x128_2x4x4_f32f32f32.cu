@@ -12,7 +12,7 @@ int main() {
 
   constexpr int TM = 16;
   constexpr int TN = 4;
-  constexpr int TK = 2;
+  constexpr int TK = 4;
 
   float alpha = 1.0f;
   float beta = 1.0f;
