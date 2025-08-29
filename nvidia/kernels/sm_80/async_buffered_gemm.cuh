@@ -119,13 +119,12 @@ __launch_bounds__(BlockDim) __global__
             tile_col_start, k_load_index, n);
         smem_b_buffer.push();
         asm volatile("cp.async.commit_group;\n");
-        k_load_index++;
+        k_load_index += K;
       }
     }
 
     for (int kk = 0; kk < k; kk += K) {
-      int32_t commit_group_id = kk / K;
-      // asm volatile("cp.async.wait_all; \n");
+      asm volatile("cp.async.wait_group 1; \n");
       __syncthreads();
 
       int32_t smem_a_k_addr = smem_a_buffer.get_current_buffer();
@@ -180,6 +179,7 @@ __launch_bounds__(BlockDim) __global__
           }
         }
       }
+      __syncthreads();
 
       smem_a_buffer.pop();
       smem_b_buffer.pop();
@@ -195,7 +195,7 @@ __launch_bounds__(BlockDim) __global__
             tile_col_start, k_load_index, n);
         smem_b_buffer.push();
         asm volatile("cp.async.commit_group;\n");
-        k_load_index++;
+        k_load_index += K;
       }
     }
 
