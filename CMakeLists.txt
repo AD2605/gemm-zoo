@@ -7,11 +7,20 @@ set(BUILD_FOLDER NVIDIA CACHE STRING "Folder to Build: Either NVIDIA or Intel")
 if (BUILD_FOLDER STREQUAL "NVIDIA")
     message(STATUS "Chosen folder: NVIDIA")
 
+    include(FetchContent)
     enable_language(CUDA)
 
     find_package(CUDAToolkit REQUIRED)
     
     set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "List of CUDA architectures to build for (e.g., 75;86)")
+
+    FetchContent_Declare(
+    cutlass
+    GIT_REPOSITORY https://github.com/NVIDIA/cutlass.git
+    GIT_TAG        main   # or a specific commit/branch/tag
+    )
+
+    FetchContent_Populate(cutlass)
 
     file(GLOB_RECURSE BENCHMARKS
         CONFIGURE_DEPENDS
@@ -34,6 +43,7 @@ if (BUILD_FOLDER STREQUAL "NVIDIA")
 
         add_executable(${BENCH_NAME} ${BENCH_SOURCE})
         target_compile_options(${BENCH_NAME} PUBLIC "${COMPILE_FLAGS}")
+        target_include_directories(${BENCH_NAME} PRIVATE ${cutlass_SOURCE_DIR}/include)
         target_include_directories(${BENCH_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nvidia)
         target_link_libraries(${BENCH_NAME} PRIVATE ${ONEMATH_LIB} CUDA::cublasLt)
         target_link_libraries(${BENCH_NAME} PRIVATE ${ONEMATH_LIB} CUDA::curand)
