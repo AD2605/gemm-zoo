@@ -10,13 +10,13 @@ __global__ void naive_gemm(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                            TOut alpha, TOut beta) {
   using namespace cute;
   Tensor gmem_tensor_a =
-      make_tensor(a, make_layout(make_shape(m, k), make_stride(k, 1)));
+      make_tensor(make_gmem_ptr(a), make_layout(make_shape(m, k), make_stride(k, 1)));
   Tensor gmem_tensor_b =
-      make_tensor(b, make_layout(make_shape(k, n), make_stride(n, 1)));
+      make_tensor(make_gmem_ptr(b), make_layout(make_shape(k, n), make_stride(n, 1)));
   Tensor gmem_tensor_c =
-      make_tensor(c, make_layout(make_shape(m, n), make_stride(n, 1)));
+      make_tensor(make_gmem_ptr(c), make_layout(make_shape(m, n), make_stride(n, 1)));
   Tensor gmem_tensor_d =
-      make_tensor(d, make_layout(make_shape(m, n), make_stride(n, 1)));
+      make_tensor(make_gmem_ptr(d), make_layout(make_shape(m, n), make_stride(n, 1)));
 
   int col = threadIdx.x + blockIdx.x * blockDim.x;
   int row = threadIdx.y + blockIdx.y * blockDim.y;
