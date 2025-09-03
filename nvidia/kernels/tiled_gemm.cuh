@@ -5,6 +5,8 @@
 
 #include <cute/layout.hpp>
 #include <cute/tensor.hpp>
+#include <cute/algorithm/gemm.hpp>
+#include <cute/algorithm/copy.hpp>
 
 #include <cstddef>
 #include <cuda_runtime.h>
@@ -18,6 +20,9 @@ __launch_bounds__(NumThreads) __global__
                          std::size_t m, std::size_t n, std::size_t k,
                          TOut alpha, TOut beta) {
   using namespace cute;
+  
+  extern __shared__ char smem[];
+  
   Tensor gmem_tensor_a = make_tensor(
       make_gmem_ptr(a), make_layout(make_shape(m, k), make_stride(k, 1)));
   Tensor gmem_tensor_b = make_tensor(
@@ -38,8 +43,14 @@ __launch_bounds__(NumThreads) __global__
 
   Layout Thr_Layout_A = make_layout(make_shape(Int<NumThreads>{}),
                                     make_stride(Int<32>{}, Int<1>{}));
-  // Thread Layout, how and how much to copy. for example, I copy 128 elements
-  // per warp per row, that is therefore the layout must be: for example,
+
+  using SMemCopyAtomA = UniversalCopy<4 * sizeof(TIn)>{};
+  using SMemCopyAtomB = UniversalCopy<4 * sizeof(TIn)>{};
+
+  TIn* smem_a_ptr = reinterpret_cast<TIn*>(smem);
+  TIn* smem_b_ptr = smem_a_ptr + M * K * sizeof(TIn);
+
+  
 }
 }  // namespace nvidia::kernels
 
