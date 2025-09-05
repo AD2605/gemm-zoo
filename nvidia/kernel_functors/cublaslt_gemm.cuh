@@ -22,7 +22,7 @@ struct cublasLt_gemm {
     cublasLtMatrixLayoutCreate(&layoutC, get_cubaslt_datatype<TOut>(), m, n, n);
     cublasLtMatrixLayoutCreate(&layoutD, get_cubaslt_datatype<TOut>(), m, n, n);
 
-    cublasComputeType_t computeType = CUBLAS_COMPUTE_32F;
+    cublasComputeType_t computeType = get_compute_type<TIn>();
     cublasLtMatmulDescCreate(&matmulDesc, computeType, CUDA_R_32F);
 
     cublasOperation_t opTranspose = CUBLAS_OP_N;
@@ -70,6 +70,20 @@ struct cublasLt_gemm {
   cudaDataType_t get_cubaslt_datatype() {
     if constexpr (std::is_same_v<T, float>) {
       return CUDA_R_32F;
+    }
+    if constexpr (std::is_same_v<T, __half>) {
+      return CUDA_R_16F;
+    }
+    if constexpr (std::is_same_v<T, __nv_bfloat16>) {
+      return CUDA_R_16BF;
+    }
+    throw std::runtime_error("Unsupported Datatype");
+  }
+
+  template <typename T>
+  auto get_compute_type() {
+    if constexpr (std::is_same_v<T, float>) {
+      return CUBLAS_COMPUTE_32F_FAST_TF32;
     }
     if constexpr (std::is_same_v<T, __half>) {
       return CUDA_R_16F;
