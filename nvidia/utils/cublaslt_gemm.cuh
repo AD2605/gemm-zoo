@@ -22,7 +22,7 @@ cudaDataType_t get_cubaslt_datatype() {
 
 template <typename TA, typename TB, typename TC, typename TD>
 void cublaslt_gemm(const TA* a, const TB* b, const TC* c, TD* d, int m, int n,
-                   int k, TD alpha, TD beta) {
+                   int k, TD alpha, TD beta, cudaStream_t stream) {
   cublasLtHandle_t ltHandle;
   cublasStatus_t status = cublasLtCreate(&ltHandle);
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -78,13 +78,13 @@ void cublaslt_gemm(const TA* a, const TB* b, const TC* c, TD* d, int m, int n,
 
   status = cublasLtMatmul(ltHandle, matmulDesc, &alpha, a, layoutA, b, layoutB,
                           &beta, c, layoutC, d, layoutD, &algo, workspace,
-                          workspaceSize, 0);
+                          workspaceSize, stream);
   if (status != CUBLAS_STATUS_SUCCESS) {
     if (workspace) cudaFree(workspace);
     throw std::runtime_error("cublasLtMatmul failed");
   }
 
-  checkCudaError(cudaDeviceSynchronize());
+  checkCudaError(cudaStreamSynchronize(stream));
 
   if (workspace) {
     cudaFree(workspace);

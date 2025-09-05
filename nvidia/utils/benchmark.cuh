@@ -58,7 +58,7 @@ void benchmark_impl(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
   checkCudaError(cudaStreamSynchronize(stream));
 
   utils::cublaslt_gemm(a_matrices[0], b_matrices[0], c_matrices[0], d_ref, m, n,
-                       k, alpha, beta);
+                       k, alpha, beta, stream);
   checkCudaError(cudaGetLastError());
   cudaStreamSynchronize(stream);
 
