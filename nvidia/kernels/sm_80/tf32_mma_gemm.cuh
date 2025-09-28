@@ -58,41 +58,6 @@ __device__ __forceinline__ void async_populate_smemB_buffer(
   }
 }
 
-template <typename T>
-__device__ __forceinline__ void load_matrix_a(const T* smem_a, const T* smem_b,
-                                              T* a_regs, T* b_regs,
-                                              int32_t smem_a_ld,
-                                              int32_t smem_a_col_offset) {
-  // hardcoded for m16n8k8 tf32 mma
-  T a0, a1, a2, a3;
-
-  auto t_idx = threadIdx.x % 32;
-  int group_id = t_idx >> 2;
-  int threadID_in_group = t_idx % 4;
-
-  a0 = smem_a[group_id * smem_a_ld + threadID_in_group + smem_a_col_offset];
-  a2 = smem_a[group_id * smem_a_ld + threadID_in_group + 4 + smem_a_col_offset];
-  a1 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group +
-              smem_a_col_offset];
-  a3 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group + 4 +
-              smem_a_col_offset];
-}
-
-template <typename T>
-__device__ __forceinline__ void load_matrix_b(const T* smem_b, T* b_regs,
-                                              int32_t smem_b_ld,
-                                              int32_t smem_b_col_offset) {
-  T b0, b1;
-
-  auto t_idx = threadIdx.x % 32;
-  int group_id = t_idx >> 2;
-  int threadID_in_group = t_idx % 4;
-
-  b0 = smem_b[threadID_in_group * smem_b_ld + group_id + smem_b_col_offset];
-  b1 = smem_b[(threadID_in_group + 4) * smem_b_ld + group_id +
-              smem_b_col_offset];
-}
-
 }  // namespace detail
 
 template <typename TIn, typename TOut, int M, int N, int K, int BlockDim,
@@ -113,6 +78,9 @@ __launch_bounds__(BlockDim) __global__
   int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
 
+  TIn* smem_a_ptr = reinterpret_cast<TIn*>(smem);
+  TIn* smem_b_ptr = smem_a_ptr + M * K;
+
   int block_id = blockIdx.x;
   int warp_id = threadIdx.x / 32;
   constexpr int num_warps = BlockDim / 32;
@@ -121,6 +89,11 @@ __launch_bounds__(BlockDim) __global__
   const int M_tiles = utils::ceil_div(m, M);
   const int N_tiles = utils::ceil_div(n, N);
   const int total_tiles = M_tiles * N_tiles;
+
+  auto t_idx = threadIdx.x % 32;
+
+  int group_id = t_idx >> 2;
+  int threadID_in_group = t_idx % 4;
 
   for (; block_id < total_tiles; block_id += gridDim.x) {
     constexpr int WM = 64;
@@ -175,23 +148,78 @@ __launch_bounds__(BlockDim) __global__
       int32_t smem_b_k_addr = smem_b_addr + head * K * N * sizeof_TIn;
 
       // m16n8k8
-      TIn A_regs[WM / MMA_M][WK / MMA_K][TM];  // 4 x 2 x 4
+      TIn A_regs[WK / MMA_K][WM / MMA_M][TM];  // 4 x 2 x 4
       TIn B_regs[WK / MMA_K][WN / MMA_N][TN];  // 2 x 4 x 2
 
       constexpr int num_warps_per_row = 4;
       const int warp_id = threadIdx.x / 32;
       auto warp_tile_row_id = warp_id / 4;
       auto warp_tile_col_id = warp_id % 4;
-      auto smem_a_col_offset = warp_tile_col_id * 4 * 32;
 
 #pragma unroll
       for (int inner = 0; inner < K; inner += WK) {
-        for (int i = 0; i < WM; i += MMA_M) {
-          for (int j = 0; j < WK; j += MMA_K) {
+#pragma unroll
+        for (int i = 0; i < WM / MMA_M; i++) {
+#pragma unroll
+          for (int j = 0; j < WK / MMA_K; j++) {
+            A_regs[j][i][0] =
+                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * K +
+                           j * MMA_K + threadID_in_group];
+            A_regs[j][i][2] =
+                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * K +
+                           j * MMA_K + threadID_in_group + 4];
+            A_regs[j][i][1] =
+                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) *
+                               K +
+                           j * MMA_K + threadID_in_group];
+            A_regs[j][i][2] =
+                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) *
+                               K +
+                           j * MMA_K + threadID_in_group + 4];
+          }
+        }
+
+#pragma unroll
+        for (int i = 0; i < WK / MMA_K; i++) {
+#pragma unroll
+          for (int j = 0; j < WN / MMA_N; j++) {
+            B_regs[i][j][0] =
+                smem_b_ptr[(i * MMA_K + threadID_in_group) * N +
+                           warp_tile_col_id * WN + j * MMA_N + group_id];
+            B_regs[i][j][1] =
+                smem_b_ptr[(i * MMA_K + threadID_in_group + 4) * N +
+                           warp_tile_col_id * WN + j * MMA_N + group_id];
+          }
+        }
+
+// 2 x 4 x 4 = 32 MMAs
+#pragma unroll
+        for (int _k = 0; _k < WK / MMA_K; _k++) {
+#pragma unroll
+          for (int _m = 0; _m < WM / MMA_M; _m++) {
+#pragma unroll
+            for (int _n = 0; _n < WN / MMA_N; _n++) {
+              asm volatile(
+                  "mma.sync.alinged.m16n8k8.row.col.f32.tf32.tf32.f32 "
+                  "{%0, %1, %2, %3}, "
+                  "{%4, %5, %6, %7}, "
+                  "{%8, %9}, "
+                  "{%10, %11, %12, %13}; \n"
+                  : "=f"(C_regs[_m][_n][0]), "=f"(C_regs[_m][_n][1]),
+                    "=f"(C_regs[_m][_n][2]), "=f"(C_regs[_m][_n][3])
+                  : "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][0])),
+                    "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][1])),
+                    "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][2])),
+                    "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][3])),
+                    "r"(*reinterpret_cast<int32_t*>(&B_regs[_k][_n][0])),
+                    "r"(*reinterpret_cast<int32_t*>(&B_regs[_k][_n][1])),
+                    "f"(C_regs[_m][_n][0]), "f"(C_regs[_m][_n][1]),
+                    "f"(C_regs[_m][_n][2]), "f"(C_regs[_m][_n][3]));
+            }
           }
         }
       }
-      __syncthreads();
+      //__syncthreads();
 
       head = (head + 1) % NumBuffers;
 
@@ -209,38 +237,24 @@ __launch_bounds__(BlockDim) __global__
       }
     }
 
-#pragma unroll
-    for (int m_thread = 0; m_thread < TM; m_thread++) {
-      auto row = warp_id * TM + m_thread;
-#pragma unroll
-      for (int n_thread = 0; n_thread < TN; n_thread += 4) {
-        auto col = thread_id * TN + n_thread;
-        auto output_offset =
-            (tile_row_start * M + row) * n + tile_col_start * N + col;
-        asm volatile(
-            "{\n\t"
-            "ld.global.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
-            "}"
-            : "=f"(RmemC[0]), "=f"(RmemC[1]), "=f"(RmemC[2]), "=f"(RmemC[3])
-            : "l"(c + output_offset));
+    // Pipeline loads from global Memory;
+    // Output Tile Size M x N;
+    constexpr int NumWarps = 8;
+    TOut D_regs[M / NumWarps][N / 32];
 
 #pragma unroll
-        for (int i = 0; i < 4; i++) {
-          RmemD[m_thread * TN + n_thread + i] =
-              alpha * RmemD[m_thread * TN + n_thread + i] + beta * RmemC[i];
-        }
-
-        asm volatile(
-            "{\n\t"
-            "st.global.v4.f32 [%0], {%1, %2, %3, %4}; \n"
-            "}" ::"l"(d + output_offset),
-            "f"(RmemD[m_thread * TN + n_thread + 0]),
-            "f"(RmemD[m_thread * TN + n_thread + 1]),
-            "f"(RmemD[m_thread * TN + n_thread + 2]),
-            "f"(RmemD[m_thread * TN + n_thread + 3])
-            : "memory");
+    for (int i = 0; i < M / NumWarps; i++) {
+#pragma unroll
+      for (int j = 0; j < N; j += 128) {
+        asm volatile("ld.global.v4.f32 {%0, %1, %2, %3}, %4; \n"
+                     : "=f"(D_regs[i][j * 4 + 0]), "=f"(D_regs[i][j * 4 + 1]),
+                       "=f"(D_regs[i][j * 4 + 2]), "=f"(D_regs[i][j * 4 + 3])
+                     : "l"(c[(tile_row_start + i * NumWarps + warp_id) * N +
+                             t_idx * 4 + j]));
       }
     }
+
+    // Now start storing everything back to shared memory;
   }
 }
 }  // namespace nvidia::kernels::sm80
