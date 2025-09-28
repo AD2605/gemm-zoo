@@ -58,26 +58,30 @@ __device__ __forceinline__ void async_populate_smemB_buffer(
   }
 }
 
-template<typename T>
-__device__ __forceinline__ void load_matrix_a(const T* smem_a, const T* smem_b, T* a_regs, T* b_regs,
-int32_t smem_a_ld, int32_t smem_a_col_offset) {
-  //hardcoded for m16n8k8 tf32 mma
+template <typename T>
+__device__ __forceinline__ void load_matrix_a(const T* smem_a, const T* smem_b,
+                                              T* a_regs, T* b_regs,
+                                              int32_t smem_a_ld,
+                                              int32_t smem_a_col_offset) {
+  // hardcoded for m16n8k8 tf32 mma
   T a0, a1, a2, a3;
 
   auto t_idx = threadIdx.x % 32;
   int group_id = t_idx >> 2;
   int threadID_in_group = t_idx % 4;
 
-
   a0 = smem_a[group_id * smem_a_ld + threadID_in_group + smem_a_col_offset];
   a2 = smem_a[group_id * smem_a_ld + threadID_in_group + 4 + smem_a_col_offset];
-  a1 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group + smem_a_col_offset];
-  a3 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group + 4 + smem_a_col_offset];
+  a1 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group +
+              smem_a_col_offset];
+  a3 = smem_a[(group_id + 8) * smem_a_ld + threadID_in_group + 4 +
+              smem_a_col_offset];
 }
 
-template<typename T>
-__device__ __forceinline__ void load_matrix_b(const T* smem_b, T* b_regs, int32_t smem_b_ld, int32_t smem_b_col_offset) {
-
+template <typename T>
+__device__ __forceinline__ void load_matrix_b(const T* smem_b, T* b_regs,
+                                              int32_t smem_b_ld,
+                                              int32_t smem_b_col_offset) {
   T b0, b1;
 
   auto t_idx = threadIdx.x % 32;
@@ -85,13 +89,14 @@ __device__ __forceinline__ void load_matrix_b(const T* smem_b, T* b_regs, int32_
   int threadID_in_group = t_idx % 4;
 
   b0 = smem_b[threadID_in_group * smem_b_ld + group_id + smem_b_col_offset];
-  b1 = smem_b[(threadID_in_group + 4) * smem_b_ld + group_id + smem_b_col_offset];
+  b1 = smem_b[(threadID_in_group + 4) * smem_b_ld + group_id +
+              smem_b_col_offset];
 }
 
 }  // namespace detail
 
-template <typename TIn, typename TOut, int M, int N, int K, 
-int BlockDim, int NumBuffers>
+template <typename TIn, typename TOut, int M, int N, int K, int BlockDim,
+          int NumBuffers>
 __launch_bounds__(BlockDim) __global__
     void async_buffered_gemm(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                              std::size_t m, std::size_t n, std::size_t k,
@@ -118,6 +123,26 @@ __launch_bounds__(BlockDim) __global__
   const int total_tiles = M_tiles * N_tiles;
 
   for (; block_id < total_tiles; block_id += gridDim.x) {
+    constexpr int WM = 64;
+    constexpr int WN = 32;
+    constexpr int WK = 16;
+
+    constexpr int MMA_M = 16;
+    constexpr int MMA_N = 8;
+    constexpr int MMA_K = 8;
+
+    constexpr int TM = 4;
+    constexpr int TN = 2;
+    constexpr int TC = 4;
+
+    TOut C_regs[WM / MMA_M][WN / MMA_N][TC];  // 4 x 4 x 4
+    for (int _i = 0; _i < WM / MMA_M; _i++) {
+      for (int _j = 0; _j < WN / MMA_N; _j++) {
+        for (int _k = 0; _k < TC; _k++) {
+          C_regs[_i][_j][_k] = 0;
+        }
+      }
+    }
 
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
@@ -149,22 +174,9 @@ __launch_bounds__(BlockDim) __global__
       int32_t smem_a_k_addr = smem_a_addr + head * M * K * sizeof_TIn;
       int32_t smem_b_k_addr = smem_b_addr + head * K * N * sizeof_TIn;
 
-      //m16n8k8
-      constexpr int WM = 64;
-      constexpr int WN = 32;
-      constexpr int WK = 16;
-
-      constexpr int MMA_M = 16;
-      constexpr int MMA_N = 8;
-      constexpr int MMA_K = 8;
-
-      constexpr int TM = 4;
-      constexpr int TN = 2;
-      constexpr int TC = 4;
-
-      TIn A_regs[WM / MMA_M][WK / MMA_K][TM];     // WM / MMA_M
-      TIn B_regs[WK / MMA_K][WN / MMA_N][TN];
-      TIn C_regs[WM / MMA_M][WN / MMA_N][TC];
+      // m16n8k8
+      TIn A_regs[WM / MMA_M][WK / MMA_K][TM];  // 4 x 2 x 4
+      TIn B_regs[WK / MMA_K][WN / MMA_N][TN];  // 2 x 4 x 2
 
       constexpr int num_warps_per_row = 4;
       const int warp_id = threadIdx.x / 32;
@@ -174,9 +186,8 @@ __launch_bounds__(BlockDim) __global__
 
 #pragma unroll
       for (int inner = 0; inner < K; inner += WK) {
-        for(int i = 0; i < WM; i += MMA_M) {
-          for(int j = 0; j < WK; j += MMA_K){
-            
+        for (int i = 0; i < WM; i += MMA_M) {
+          for (int j = 0; j < WK; j += MMA_K) {
           }
         }
       }
