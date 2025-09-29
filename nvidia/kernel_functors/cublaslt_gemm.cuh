@@ -95,7 +95,7 @@ struct cublasLt_gemm {
   }
 
   cublasLtHandle_t ltHandle;
-  void* workspace;
+  void* workspace = nullptr;
   std::size_t workspaceSize;
   cublasLtMatmulDesc_t matmulDesc;
   cublasLtMatrixLayout_t layoutA;
