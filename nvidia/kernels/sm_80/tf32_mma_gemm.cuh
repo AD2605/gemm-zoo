@@ -210,7 +210,6 @@ __launch_bounds__(BlockDim) __global__
           }
         }
       }
-      //__syncthreads();
 
       head = (head + 1) % NumBuffers;
 
@@ -227,6 +226,8 @@ __launch_bounds__(BlockDim) __global__
         tail = (tail + 1) % NumBuffers;
       }
     }
+
+    __syncthreads();
 
     // Pipeline loads from global Memory;
     // Output Tile Size M x N;
