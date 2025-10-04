@@ -83,39 +83,41 @@ __launch_bounds__(BlockDim) __global__
   TOut RmemD[TM * TN];
   TIn RmemA[TM * TK];
   TIn RmemB[TK * TN];
-  TOut RmemC[4];  // variables in which c values will be loaded;
 
   const int M_tiles = utils::ceil_div(m, M);
   const int N_tiles = utils::ceil_div(n, N);
   const int total_tiles = M_tiles * N_tiles;
 
-  for (; block_id < total_tiles; block_id += gridDim.x) {
+  auto tile_row_start = block_id / N_tiles;
+  auto tile_col_start = block_id % N_tiles;
+
+  int tile_row_start_temp;
+  int tile_col_start_temp;
+
+  int head = 0;
+  int tail = 0;
+
+  // start the transfer of all the buffers;
+  int k_load_index = 0;
+#pragma unroll(NumBuffers)
+  for (int i = 0; i < NumBuffers; i++) {
+    if (k_load_index < k) {
+      detail::async_populate_smemA_buffer<M, K, TIn>(
+          smem_a_addr + tail * M * K * sizeof_TIn, a, num_warps, warp_id,
+          thread_id, tile_row_start, k_load_index, k);
+      detail::async_populate_smemB_buffer<K, N, TIn>(
+          smem_b_addr + tail * K * N * sizeof_TIn, b, num_warps, warp_id,
+          thread_id, tile_col_start, k_load_index, n);
+      asm volatile("cp.async.commit_group;\n");
+      k_load_index += K;
+      tail = (tail + 1) % NumBuffers;
+    }
+  }
+
+  while (block_id < total_tiles) {
 #pragma unroll
     for (int i = 0; i < TM * TN; i++) {
       RmemD[i] = 0;
-    }
-
-    auto tile_row_start = block_id / N_tiles;
-    auto tile_col_start = block_id % N_tiles;
-
-    int head = 0;
-    int tail = 0;
-
-    // start the transfer of all the buffers;
-    int k_load_index = 0;
-#pragma unroll(NumBuffers)
-    for (int i = 0; i < NumBuffers; i++) {
-      if (k_load_index < k) {
-        detail::async_populate_smemA_buffer<M, K, TIn>(
-            smem_a_addr + tail * M * K * sizeof_TIn, a, num_warps, warp_id,
-            thread_id, tile_row_start, k_load_index, k);
-        detail::async_populate_smemB_buffer<K, N, TIn>(
-            smem_b_addr + tail * K * N * sizeof_TIn, b, num_warps, warp_id,
-            thread_id, tile_col_start, k_load_index, n);
-        asm volatile("cp.async.commit_group;\n");
-        k_load_index += K;
-        tail = (tail + 1) % NumBuffers;
-      }
     }
 
     for (int kk = 0; kk < k; kk += K) {
@@ -195,6 +197,8 @@ __launch_bounds__(BlockDim) __global__
       }
     }
 
+    TOut RmemC[TM][TN];  // variables in which c values will be loaded;
+
 #pragma unroll
     for (int m_thread = 0; m_thread < TM; m_thread++) {
       auto row = warp_id * TM + m_thread;
@@ -207,14 +211,58 @@ __launch_bounds__(BlockDim) __global__
             "{\n\t"
             "ld.global.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
             "}"
-            : "=f"(RmemC[0]), "=f"(RmemC[1]), "=f"(RmemC[2]), "=f"(RmemC[3])
+            : "=f"(RmemC[m_thread][n_thread + 0]),
+              "=f"(RmemC[m_thread][n_thread + 1]),
+              "=f"(RmemC[m_thread][n_thread + 2]),
+              "=f"(RmemC[m_thread][n_thread + 3])
             : "l"(c + output_offset));
+      }
+    }
+
+    block_id += gridDim.x;
+    if (block_id < total_tiles) {
+      tile_row_start_temp = block_id / N_tiles;
+      tile_col_start_temp = block_id % N_tiles;
+      head = 0;
+      tail = 0;
+
+      // start the transfer of all the buffers;
+      k_load_index = 0;
+#pragma unroll(NumBuffers)
+      for (int i = 0; i < NumBuffers; i++) {
+        if (k_load_index < k) {
+          detail::async_populate_smemA_buffer<M, K, TIn>(
+              smem_a_addr + tail * M * K * sizeof_TIn, a, num_warps, warp_id,
+              thread_id, tile_row_start_temp, k_load_index, k);
+          detail::async_populate_smemB_buffer<K, N, TIn>(
+              smem_b_addr + tail * K * N * sizeof_TIn, b, num_warps, warp_id,
+              thread_id, tile_col_start_temp, k_load_index, n);
+          asm volatile("cp.async.commit_group;\n");
+          k_load_index += K;
+          tail = (tail + 1) % NumBuffers;
+        }
+      }
+    }
 
 #pragma unroll
-        for (int i = 0; i < 4; i++) {
-          RmemD[m_thread * TN + n_thread + i] =
-              alpha * RmemD[m_thread * TN + n_thread + i] + beta * RmemC[i];
-        }
+    for (int m_thread = 0; m_thread < TM; m_thread++) {
+      auto row = warp_id * TM + m_thread;
+#pragma unroll
+      for (int n_thread = 0; n_thread < TN; n_thread++) {
+        RmemD[m_thread * TN + n_thread] =
+            alpha * RmemD[m_thread * TN + n_thread] +
+            beta * RmemC[m_thread][n_thread];
+      }
+    }
+
+#pragma unroll
+    for (int m_thread = 0; m_thread < TM; m_thread++) {
+      auto row = warp_id * TM + m_thread;
+#pragma unroll
+      for (int n_thread = 0; n_thread < TN; n_thread += 4) {
+        auto col = thread_id * TN + n_thread;
+        auto output_offset =
+            (tile_row_start * M + row) * n + tile_col_start * N + col;
 
         asm volatile(
             "{\n\t"
@@ -227,6 +275,9 @@ __launch_bounds__(BlockDim) __global__
             : "memory");
       }
     }
+
+    tile_row_start = tile_row_start_temp;
+    tile_col_start = tile_col_start_temp;
   }
 }
 }  // namespace nvidia::kernels::sm80
