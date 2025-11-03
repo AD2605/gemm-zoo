@@ -8,7 +8,7 @@
 int main() {
   constexpr int M = 128;
   constexpr int N = 128;
-  constexpr int K = 32;
+  constexpr int K = 16;
 
   float alpha = 1.0f;
   float beta = 1.0f;

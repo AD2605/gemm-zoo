@@ -11,7 +11,7 @@ if (BUILD_FOLDER STREQUAL "NVIDIA")
 
     find_package(CUDAToolkit REQUIRED)
     
-    set(CMAKE_CUDA_ARCHITECTURES "86" CACHE STRING "List of CUDA architectures to build for (e.g., 75;86)")
+    set(CMAKE_CUDA_ARCHITECTURES "89" CACHE STRING "List of CUDA architectures to build for (e.g., 75;86)")
 
     file(GLOB_RECURSE BENCHMARKS
         CONFIGURE_DEPENDS
