@@ -22,14 +22,14 @@ struct tf32_mma_gemm {
 
     static_assert(M % (256 / 8) == 0);
 
-    smem_size_required = 3 * K * sizeof(TIn) * (M + N);
+    smem_size_required = 6 * K * sizeof(TIn) * (M + N);
     assert(smem_size_required < properties.sharedMemPerMultiprocessor);
 
     checkCudaError(cudaFuncSetAttribute(
-        nvidia::kernels::sm80::tf32_mma_gemm<TIn, TOut, M, N, K, 256, 3>,
+        nvidia::kernels::sm80::tf32_mma_gemm<TIn, TOut, M, N, K, 128, 6>,
         cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size_required));
     auto num_sms = static_cast<std::size_t>(properties.multiProcessorCount);
-    blockDim = dim3(256, 1, 1);
+    blockDim = dim3(128, 1, 1);
     auto m_tiles_required = (m + M - 1) / M;
     auto n_tiles_required = (n + N - 1) / N;
     auto num_tiles_required =
@@ -39,7 +39,7 @@ struct tf32_mma_gemm {
 
   void operator()(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                   const TOut alpha, const TOut beta, cudaStream_t stream) {
-    nvidia::kernels::sm80::tf32_mma_gemm<TIn, TOut, M, N, K, 256, 3>
+    nvidia::kernels::sm80::tf32_mma_gemm<TIn, TOut, M, N, K, 128, 6>
         <<<gridDim, blockDim, smem_size_required, stream>>>(a, b, c, d, m, n, k,
                                                             alpha, beta);
   }

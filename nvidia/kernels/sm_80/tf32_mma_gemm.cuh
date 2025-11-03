@@ -69,7 +69,6 @@ __launch_bounds__(BlockDim) __global__
 
   static_assert(K % 2 == 0);
   static_assert(N % 128 == 0);
-  static_assert(BlockDim == 256);
 
   extern __shared__ char smem[];
   constexpr int32_t sizeof_TIn = static_cast<int32_t>(sizeof(TIn));
@@ -86,20 +85,28 @@ __launch_bounds__(BlockDim) __global__
 
   int group_id = t_idx >> 2;
   int threadID_in_group = t_idx % 4;
+  constexpr int NumWarps = BlockDim / 32;
+
+  constexpr int WM = 64;
+  constexpr int WN = 64;
+  constexpr int WK = 16;
+
+  constexpr int MMA_M = 16;
+  constexpr int MMA_N = 8;
+  constexpr int MMA_K = 8;
+
+  constexpr int TM = 4;
+  constexpr int TN = 2;
+  constexpr int TC = 4;
+
+  const int warp_id = threadIdx.x / 32;
+  auto warp_tile_row_id = warp_id / (NumWarps / 2);
+  auto warp_tile_col_id = warp_id % (NumWarps / 2);
+
+  const int smem_load_a_offset = warp_tile_row_id * WM + group_id;
+  const int smem_load_b_offset = warp_tile_col_id * WN + group_id;
 
   for (; block_id < total_tiles; block_id += gridDim.x) {
-    constexpr int WM = 64;
-    constexpr int WN = 32;
-    constexpr int WK = 16;
-
-    constexpr int MMA_M = 16;
-    constexpr int MMA_N = 8;
-    constexpr int MMA_K = 8;
-
-    constexpr int TM = 4;
-    constexpr int TN = 2;
-    constexpr int TC = 4;
-
     TOut C_regs[WM / MMA_M][WN / MMA_N][TC];  // 4 x 4 x 4
     for (int _i = 0; _i < WM / MMA_M; _i++) {
       for (int _j = 0; _j < WN / MMA_N; _j++) {
@@ -111,10 +118,6 @@ __launch_bounds__(BlockDim) __global__
 
     auto tile_row_start = block_id / N_tiles;
     auto tile_col_start = block_id % N_tiles;
-
-    const int warp_id = threadIdx.x / 32;
-    auto warp_tile_row_id = warp_id / 4;
-    auto warp_tile_col_id = warp_id % 4;
 
     int head = 0;
     int tail = 0;
@@ -153,20 +156,17 @@ __launch_bounds__(BlockDim) __global__
         for (int i = 0; i < WM / MMA_M; i++) {
 #pragma unroll
           for (int j = 0; j < WK / MMA_K; j++) {
-            A_regs[j][i][0] =
-                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * K +
-                           inner + j * MMA_K + threadID_in_group];
+            A_regs[j][i][0] = smem_a_ptr[(smem_load_a_offset + i * MMA_M) * K +
+                                         inner + j * MMA_K + threadID_in_group];
             A_regs[j][i][2] =
-                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * K +
-                           inner + j * MMA_K + threadID_in_group + 4];
+                smem_a_ptr[(smem_load_a_offset + i * MMA_M) * K + inner +
+                           j * MMA_K + threadID_in_group + 4];
             A_regs[j][i][1] =
-                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) *
-                               K +
-                           inner + j * MMA_K + threadID_in_group];
+                smem_a_ptr[(smem_load_a_offset + i * MMA_M + 8) * K + inner +
+                           j * MMA_K + threadID_in_group];
             A_regs[j][i][3] =
-                smem_a_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) *
-                               K +
-                           inner + j * MMA_K + threadID_in_group + 4];
+                smem_a_ptr[(smem_load_a_offset + i * MMA_M + 8) * K + inner +
+                           j * MMA_K + threadID_in_group + 4];
           }
         }
 
@@ -176,10 +176,10 @@ __launch_bounds__(BlockDim) __global__
           for (int j = 0; j < WN / MMA_N; j++) {
             B_regs[i][j][0] =
                 smem_b_ptr[(inner + i * MMA_K + threadID_in_group) * N +
-                           warp_tile_col_id * WN + j * MMA_N + group_id];
+                           smem_load_b_offset + j * MMA_N];
             B_regs[i][j][1] =
                 smem_b_ptr[(inner + i * MMA_K + threadID_in_group + 4) * N +
-                           warp_tile_col_id * WN + j * MMA_N + group_id];
+                           smem_load_b_offset + j * MMA_N];
           }
         }
 
@@ -231,7 +231,7 @@ __launch_bounds__(BlockDim) __global__
 
     // Pipeline loads from global Memory;
     // Output Tile Size M x N;
-    constexpr int NumWarps = 8;
+    constexpr int NumWarps = BlockDim / 32;
     TOut D_regs[M / NumWarps][N / 32];
 
 #pragma unroll
