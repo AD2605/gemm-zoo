@@ -2,6 +2,7 @@
 #define NVIDIA_KERNELS_SM80_TF32_MMA_GEMM_CUH
 
 #include "kernels/hilbert.cuh"
+#include "kernels/morton_encoding.cuh"
 #include "kernels/ring_buffer.cuh"
 #include "kernels/utils.cuh"
 
