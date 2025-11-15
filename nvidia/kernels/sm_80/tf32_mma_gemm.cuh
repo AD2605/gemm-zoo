@@ -1,6 +1,7 @@
 #ifndef NVIDIA_KERNELS_SM80_TF32_MMA_GEMM_CUH
 #define NVIDIA_KERNELS_SM80_TF32_MMA_GEMM_CUH
 
+#include "kernels/hilbert.cuh"
 #include "kernels/ring_buffer.cuh"
 #include "kernels/utils.cuh"
 
@@ -106,6 +107,9 @@ __launch_bounds__(BlockDim) __global__
   const int smem_load_a_offset = warp_tile_row_id * WM + group_id;
   const int smem_load_b_offset = warp_tile_col_id * WN + group_id;
 
+  uint32_t tile_row_start;
+  uint32_t tile_col_start;
+
   for (; block_id < total_tiles; block_id += gridDim.x) {
     TOut C_regs[WM / MMA_M][WN / MMA_N][TC];  // 4 x 4 x 4
     for (int _i = 0; _i < WM / MMA_M; _i++) {
@@ -116,8 +120,7 @@ __launch_bounds__(BlockDim) __global__
       }
     }
 
-    auto tile_row_start = block_id / N_tiles;
-    auto tile_col_start = block_id % N_tiles;
+    utils::map_to_hilbert(block_id, N_tiles, tile_col_start, tile_row_start);
 
     int head = 0;
     int tail = 0;
