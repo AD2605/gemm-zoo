@@ -12,6 +12,30 @@
 namespace nvidia::kernels::sm80 {
 
 namespace detail {
+
+template <int LD>
+__device__ __forceinline__ int swizzle_col(int y, int x) {
+  constexpr int chunk_factor = 4;
+  constexpr int actual_chunks = LD / chunk_factor;
+  constexpr int num_chunks = []() constexpr {
+    int nc = 1;
+    while (nc * 2 <= actual_chunks) nc *= 2;
+    return nc;
+  }();
+  constexpr int mask = num_chunks - 1;
+  constexpr int log2n = []() constexpr {
+    int l = 0;
+    for (int t = num_chunks; t > 1; t /= 2) l++;
+    return l;
+  }();
+  int i_chunk = y * actual_chunks + (x / chunk_factor);
+  int y_chunk = i_chunk >> log2n;
+  int x_chunk = i_chunk & mask;
+  int x_chunk_swz = x_chunk ^ (y_chunk & mask);
+  int x_swz = x_chunk_swz * chunk_factor + (x % chunk_factor);
+  return x_swz;
+}
+
 template <int M, int K, int NumThreads, typename TIn>
 __device__ __forceinline__ void async_populate_smemA_buffer(
     const int32_t smem_a_addr, const TIn* gmem_ptr, const int tile_row_start,
@@ -22,8 +46,9 @@ __device__ __forceinline__ void async_populate_smemA_buffer(
   for (int i = threadIdx.x; i < total_elements; i += NumThreads) {
     int row_id = i / (K / vec_size);
     int col_id = (i % (K / vec_size)) * vec_size;
+    int col_swz = detail::swizzle_col<K>(row_id, col_id);
     uint32_t smem_offset =
-        (row_id * K + col_id) * static_cast<int32_t>(sizeof(TIn));
+        (row_id * K + col_swz) * static_cast<int32_t>(sizeof(TIn));
     uint32_t gmem_offset = (row_offset + row_id) * k + (kk + col_id);
     asm volatile(
         "{\n\t"
@@ -45,8 +70,9 @@ __device__ __forceinline__ void async_populate_smemB_buffer(
   for (int i = threadIdx.x; i < total_elements; i += NumThreads) {
     int row_id = i / (N / vec_size);
     int col_id = (i % (N / vec_size)) * (16 / sizeof(TIn));
+    int col_swz = detail::swizzle_col<N>(row_id, col_id);
     uint32_t smem_offset =
-        (row_id * N + col_id) * static_cast<int32_t>(sizeof(TIn));
+        (row_id * N + col_swz) * static_cast<int32_t>(sizeof(TIn));
     uint32_t gmem_offset = (kk + row_id) * n + (col_offset + col_id);
     asm volatile(
         "{\n\t"
@@ -86,7 +112,7 @@ __launch_bounds__(BlockDim) __global__
   auto t_idx = threadIdx.x % 32;
 
   int group_id = t_idx >> 2;
-  int threadID_in_group = t_idx % 4;
+  int thread_id_in_group = t_idx % 4;
   constexpr int NumWarps = BlockDim / 32;
 
   constexpr int WM = 64;
@@ -160,17 +186,18 @@ __launch_bounds__(BlockDim) __global__
         for (int i = 0; i < WM / MMA_M; i++) {
 #pragma unroll
           for (int j = 0; j < WK / MMA_K; j++) {
-            A_regs[j][i][0] = smem_a_ptr[(smem_load_a_offset + i * MMA_M) * K +
-                                         inner + j * MMA_K + threadID_in_group];
+            int a_row0 = smem_load_a_offset + i * MMA_M;
+            int a_row1 = a_row0 + 8;
+            int a_col0 = inner + j * MMA_K + thread_id_in_group;
+            int a_col1 = a_col0 + 4;
+            A_regs[j][i][0] =
+                smem_a_ptr[a_row0 * K + detail::swizzle_col<K>(a_row0, a_col0)];
             A_regs[j][i][2] =
-                smem_a_ptr[(smem_load_a_offset + i * MMA_M) * K + inner +
-                           j * MMA_K + threadID_in_group + 4];
+                smem_a_ptr[a_row0 * K + detail::swizzle_col<K>(a_row0, a_col1)];
             A_regs[j][i][1] =
-                smem_a_ptr[(smem_load_a_offset + i * MMA_M + 8) * K + inner +
-                           j * MMA_K + threadID_in_group];
+                smem_a_ptr[a_row1 * K + detail::swizzle_col<K>(a_row1, a_col0)];
             A_regs[j][i][3] =
-                smem_a_ptr[(smem_load_a_offset + i * MMA_M + 8) * K + inner +
-                           j * MMA_K + threadID_in_group + 4];
+                smem_a_ptr[a_row1 * K + detail::swizzle_col<K>(a_row1, a_col1)];
           }
         }
 
@@ -178,12 +205,13 @@ __launch_bounds__(BlockDim) __global__
         for (int i = 0; i < WK / MMA_K; i++) {
 #pragma unroll
           for (int j = 0; j < WN / MMA_N; j++) {
+            int b_row0 = inner + i * MMA_K + thread_id_in_group;
+            int b_row1 = b_row0 + 4;
+            int b_col = smem_load_b_offset + j * MMA_N;
             B_regs[i][j][0] =
-                smem_b_ptr[(inner + i * MMA_K + threadID_in_group) * N +
-                           smem_load_b_offset + j * MMA_N];
+                smem_b_ptr[b_row0 * N + detail::swizzle_col<N>(b_row0, b_col)];
             B_regs[i][j][1] =
-                smem_b_ptr[(inner + i * MMA_K + threadID_in_group + 4) * N +
-                           smem_load_b_offset + j * MMA_N];
+                smem_b_ptr[b_row1 * N + detail::swizzle_col<N>(b_row1, b_col)];
           }
         }
 
@@ -260,16 +288,16 @@ __launch_bounds__(BlockDim) __global__
       for (int j = 0; j < WN / MMA_N; j++) {
         output_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * N +
                    warp_tile_col_id * WN + j * MMA_N +
-                   ((threadID_in_group * 2) + (0 & 0x1))] = C_regs[i][j][0];
+                   ((thread_id_in_group * 2) + (0 & 0x1))] = C_regs[i][j][0];
         output_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id) * N +
                    warp_tile_col_id * WN + j * MMA_N +
-                   ((threadID_in_group * 2) + (1 & 0x1))] = C_regs[i][j][1];
+                   ((thread_id_in_group * 2) + (1 & 0x1))] = C_regs[i][j][1];
         output_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) * N +
                    warp_tile_col_id * WN + j * MMA_N +
-                   ((threadID_in_group * 2) + (2 & 0x1))] = C_regs[i][j][2];
+                   ((thread_id_in_group * 2) + (2 & 0x1))] = C_regs[i][j][2];
         output_ptr[(warp_tile_row_id * WM + i * MMA_M + group_id + 8) * N +
                    warp_tile_col_id * WN + j * MMA_N +
-                   ((threadID_in_group * 2) + (3 & 0x1))] = C_regs[i][j][3];
+                   ((thread_id_in_group * 2) + (3 & 0x1))] = C_regs[i][j][3];
       }
     }
     __syncthreads();
