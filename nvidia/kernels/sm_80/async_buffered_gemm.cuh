@@ -25,7 +25,7 @@ __device__ __forceinline__ void async_populate_smemA_buffer(
     uint32_t gmem_offset = (row_offset + row_id) * k + (kk + col_id);
     asm volatile(
         "{\n\t"
-        "cp.async.cg.shared.global.L2::256B [%0], [%1], 16; \n\t"
+        "cp.async.ca.shared.global.L2::256B [%0], [%1], 16; \n\t"
         "}"
         :
         : "r"(smem_a_addr + smem_offset), "l"(gmem_ptr + gmem_offset)
@@ -48,7 +48,7 @@ __device__ __forceinline__ void async_populate_smemB_buffer(
     uint32_t gmem_offset = (kk + row_id) * n + (col_offset + col_id);
     asm volatile(
         "{\n\t"
-        "cp.async.cg.shared.global.L2::256B [%0], [%1], 16; \n\t"
+        "cp.async.ca.shared.global.L2::256B [%0], [%1], 16; \n\t"
         "}"
         :
         : "r"(smem_b_addr + smem_offset), "l"(gmem_ptr + gmem_offset)
