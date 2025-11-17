@@ -16,6 +16,9 @@ int main() {
   using kernel_functor_struct =
       nvidia::kernel_functors::tf32_mma_gemm<float, float, M, N, K>;
   benchmark::benchmark<kernel_functor_struct, float, float>(
-      {{1024, 1024, 1024}, {2048, 2048, 2048}, {4096, 4096, 4096}}, alpha,
-      beta);
+      {{1024, 1024, 1024},
+       {2048, 2048, 2048},
+       {4096, 4096, 4096},
+       {8192, 8192, 8192}},
+      alpha, beta);
 }
