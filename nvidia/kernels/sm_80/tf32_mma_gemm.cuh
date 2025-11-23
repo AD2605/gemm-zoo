@@ -129,8 +129,9 @@ __launch_bounds__(BlockDim) __global__
   constexpr int TC = 4;
 
   const int warp_id = threadIdx.x / 32;
-  auto warp_tile_row_id = warp_id / (NumWarps / 2);
-  auto warp_tile_col_id = warp_id % (NumWarps / 2);
+  constexpr int num_warps_per_row = N / WN;
+  auto warp_tile_row_id = warp_id / num_warps_per_row;
+  auto warp_tile_col_id = warp_id % num_warps_per_row;
 
   const int smem_load_a_offset = warp_tile_row_id * WM + group_id;
   const int smem_load_b_offset = warp_tile_col_id * WN + group_id;
@@ -264,7 +265,6 @@ __launch_bounds__(BlockDim) __global__
     }
 
     __syncthreads();
-
     // Pipeline loads from global Memory;
     // Output Tile Size M x N;
     int32_t d_row_offset = tile_row_start * M + warp_tile_row_id * WM;
@@ -310,7 +310,7 @@ __launch_bounds__(BlockDim) __global__
     int32_t smem_output_buffer_addr =
         smem_a_addr +
         NumBuffers * static_cast<int32_t>(sizeof(TIn)) * (M * K + K * N) +
-        warp_id * 64 * sizeof(TOut);
+        warp_id * WN * sizeof(TOut);
     // as each WM x WN is made up of 16 x 8 matrices, I will have 2 matrices
     // along rows and 4 matrices along columns (as WM is hardcoded to 32 and WN
     // is hardcoded to 64)
@@ -319,10 +319,10 @@ __launch_bounds__(BlockDim) __global__
     // GROK: you would need to lookup the tf32 mma C matrix mapping
 #pragma unroll
     for (int d_row = 0; d_row < WM; d_row++) {
-      int num_matrix = d_row / 16;
-      int resp_thread_id_start = (d_row % 8) * 4;
-      int reg_id_offset = (d_row % 16) / 8;
-      int output_smem_thread_offset =
+      const int num_matrix = d_row / 16;
+      const int resp_thread_id_start = (d_row % 8) * 4;
+      const int reg_id_offset = (d_row % 16) / 8;
+      const int output_smem_thread_offset =
           smem_output_buffer_addr + 2 * (t_idx - resp_thread_id_start) *
                                         static_cast<int32_t>(sizeof(TOut));
 #pragma unroll
@@ -338,7 +338,9 @@ __launch_bounds__(BlockDim) __global__
                 "f"(C_regs[d_row / MMA_M][d_col / MMA_N][2 * reg_id_offset + 1])
               : "memory");
         }
-        __syncwarp();
+      }
+      __syncwarp();
+      for (int d_col = 0; d_col < WN; d_col += 64) {
         float v01, v02;
         asm volatile("ld.shared.v2.f32 {%0, %1}, [%2]; \n\t"
                      : "=f"(v01), "=f"(v02)
@@ -353,8 +355,8 @@ __launch_bounds__(BlockDim) __global__
                      "f"(D_regs[d_row][d_col / 32 + 0]),
                      "f"(D_regs[d_row][d_col / 32 + 1])
                      : "memory");
-        __syncwarp();
       }
+      __syncwarp();
     }
     tile_col_start = tile_col_start_temp;
     tile_row_start = tile_row_start_temp;
