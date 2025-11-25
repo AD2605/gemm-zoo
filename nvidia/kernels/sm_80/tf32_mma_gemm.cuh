@@ -7,6 +7,7 @@
 #include "kernels/utils.cuh"
 
 #include <cstdint>
+#include <cstdio>
 #include <cuda_runtime.h>
 
 namespace nvidia::kernels::sm80 {
@@ -175,7 +176,7 @@ __launch_bounds__(BlockDim) __global__
     }
 
     for (int kk = 0; kk < k; kk += K) {
-      asm volatile("cp.async.wait_group 1; \n");
+      asm volatile("cp.async.wait_group 0; \n");
       __syncthreads();
 
       TIn* smem_a_ptr = reinterpret_cast<TIn*>(smem) + head * M * K;
@@ -247,7 +248,7 @@ __launch_bounds__(BlockDim) __global__
           }
         }
       }
-
+      // printf("warp_id = %d, t_idx = %d completed mmas; \n;", warp_id, t_idx);
       head = (head + 1) % NumBuffers;
 
       // populate the (k + 3)th buffer;
@@ -264,7 +265,6 @@ __launch_bounds__(BlockDim) __global__
       }
     }
 
-    __syncthreads();
     // Pipeline loads from global Memory;
     // Output Tile Size M x N;
     int32_t d_row_offset = tile_row_start * M + warp_tile_row_id * WM;
@@ -279,7 +279,8 @@ __launch_bounds__(BlockDim) __global__
             "ld.global.cs.v2.f32 {%0, %1}, [%2]; \n\t"
             : "=f"(D_regs[d_row][d_col / 32 + 0]),
               "=f"(D_regs[d_row][d_col / 32 + 1])
-            : "l"(&c[(d_row_offset + d_row) * n + d_col_offset + d_col]));
+            : "l"(&c[(d_row_offset + d_row) * n + d_col_offset + d_col])
+            : "memory");
       }
     }
 
@@ -287,24 +288,27 @@ __launch_bounds__(BlockDim) __global__
     k_load_index = 0;
     head = 0;
     tail = 0;
-    // pipeline loads to smem for next tile;
-    utils::map_to_hilbert(block_id, N_tiles, tile_col_start_temp,
-                          tile_row_start_temp);
+    if (block_id < total_tiles) {
+      // pipeline loads to smem for next tile;
+      utils::map_to_hilbert(block_id, N_tiles, tile_col_start_temp,
+                            tile_row_start_temp);
+      if (tile_row_start_temp < M_tiles && tile_col_start_temp < N_tiles) {
 #pragma unroll(NumBuffers)
-    for (int i = 0; i < NumBuffers; i++) {
-      if (k_load_index < k) {
-        detail::async_populate_smemA_buffer<M, K, BlockDim, TIn>(
-            smem_a_addr + tail * M * K * sizeof_TIn, a, tile_row_start_temp,
-            k_load_index, k);
-        detail::async_populate_smemB_buffer<K, N, BlockDim, TIn>(
-            smem_b_addr + tail * K * N * sizeof_TIn, b, tile_col_start_temp,
-            k_load_index, n);
-        asm volatile("cp.async.commit_group;\n");
-        k_load_index += K;
-        tail = (tail + 1) % NumBuffers;
+        for (int i = 0; i < NumBuffers; i++) {
+          if (k_load_index < k) {
+            detail::async_populate_smemA_buffer<M, K, BlockDim, TIn>(
+                smem_a_addr + tail * M * K * sizeof_TIn, a, tile_row_start_temp,
+                k_load_index, k);
+            detail::async_populate_smemB_buffer<K, N, BlockDim, TIn>(
+                smem_b_addr + tail * K * N * sizeof_TIn, b, tile_col_start_temp,
+                k_load_index, n);
+            asm volatile("cp.async.commit_group;\n");
+            k_load_index += K;
+            tail = (tail + 1) % NumBuffers;
+          }
+        }
       }
     }
-
     // so each warp now writes WN to shared memory, and then writes to the
     // output
     int32_t smem_output_buffer_addr =
@@ -315,8 +319,6 @@ __launch_bounds__(BlockDim) __global__
     // along rows and 4 matrices along columns (as WM is hardcoded to 32 and WN
     // is hardcoded to 64)
 
-    // TODO: implement;
-    // GROK: you would need to lookup the tf32 mma C matrix mapping
 #pragma unroll
     for (int d_row = 0; d_row < WM; d_row++) {
       const int num_matrix = d_row / 16;
@@ -328,6 +330,8 @@ __launch_bounds__(BlockDim) __global__
 #pragma unroll
       for (int d_col = 0; d_col < WN; d_col += MMA_N) {
         if (t_idx >= resp_thread_id_start && t_idx < resp_thread_id_start + 4) {
+          // printf("for d_row = %d, warp_id = %d, t_idx = %d\n", d_row,
+          // warp_id, t_idx);
           asm volatile(
               "st.shared.v2.f32 [%0], {%1, %2}; \n\t"
               :
@@ -345,7 +349,8 @@ __launch_bounds__(BlockDim) __global__
         asm volatile("ld.shared.v2.f32 {%0, %1}, [%2]; \n\t"
                      : "=f"(v01), "=f"(v02)
                      : "r"(smem_output_buffer_addr +
-                           2 * t_idx * static_cast<int32_t>(sizeof(TOut))));
+                           2 * t_idx * static_cast<int32_t>(sizeof(TOut)))
+                     : "memory");
         D_regs[d_row][d_col / 32 + 0] *= beta;
         D_regs[d_row][d_col / 32 + 1] *= beta;
         D_regs[d_row][d_col / 32 + 0] += alpha * v01;
@@ -356,8 +361,8 @@ __launch_bounds__(BlockDim) __global__
                      "f"(D_regs[d_row][d_col / 32 + 1])
                      : "memory");
       }
-      __syncwarp();
     }
+
     tile_col_start = tile_col_start_temp;
     tile_row_start = tile_row_start_temp;
   }
