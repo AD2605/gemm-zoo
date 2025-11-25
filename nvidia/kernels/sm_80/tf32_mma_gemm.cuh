@@ -275,7 +275,7 @@ __launch_bounds__(BlockDim) __global__
         int global_row = tile_row_start * M + loc_row;
         int global_col = tile_col_start * N + loc_col;
         asm volatile(
-            "ld.global.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
+            "ld.global.cs.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
             : "=f"(D_regs[i][(j / 32) + 0]), "=f"(D_regs[i][(j / 32) + 1]),
               "=f"(D_regs[i][(j / 32) + 2]), "=f"(D_regs[i][(j / 32) + 3])
             : "l"(c + global_row * n + global_col));
@@ -336,7 +336,7 @@ __launch_bounds__(BlockDim) __global__
         int loc_col = t_idx * 4 + j;
         int global_row = tile_row_start * M + loc_row;
         int global_col = tile_col_start * N + loc_col;
-        asm volatile("st.global.v4.f32 [%0], {%1, %2, %3, %4}; \n" ::"l"(
+        asm volatile("st.global.cs.v4.f32 [%0], {%1, %2, %3, %4}; \n" ::"l"(
                          d + global_row * n + global_col),
                      "f"(D_regs_temp[i][(j / 32) + 0]),
                      "f"(D_regs_temp[i][(j / 32) + 1]),
