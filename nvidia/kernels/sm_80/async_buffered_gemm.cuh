@@ -1,6 +1,7 @@
 #ifndef NVIDIA_KERNELS_SM80_ASYNC_BUFFERED_GEMM_CUH
 #define NVIDIA_KERNELS_SM80_ASYNC_BUFFERED_GEMM_CUH
 
+#include "kernels/hilbert.cuh"
 #include "kernels/ring_buffer.cuh"
 #include "kernels/utils.cuh"
 
@@ -25,7 +26,7 @@ __device__ __forceinline__ void async_populate_smemA_buffer(
     uint32_t gmem_offset = (row_offset + row_id) * k + (kk + col_id);
     asm volatile(
         "{\n\t"
-        "cp.async.ca.shared.global.L2::256B [%0], [%1], 16; \n\t"
+        "cp.async.cg.shared.global.L2::256B [%0], [%1], 16; \n\t"
         "}"
         :
         : "r"(smem_a_addr + smem_offset), "l"(gmem_ptr + gmem_offset)
@@ -48,7 +49,7 @@ __device__ __forceinline__ void async_populate_smemB_buffer(
     uint32_t gmem_offset = (kk + row_id) * n + (col_offset + col_id);
     asm volatile(
         "{\n\t"
-        "cp.async.ca.shared.global.L2::256B [%0], [%1], 16; \n\t"
+        "cp.async.cg.shared.global.L2::256B [%0], [%1], 16; \n\t"
         "}"
         :
         : "r"(smem_b_addr + smem_offset), "l"(gmem_ptr + gmem_offset)
@@ -68,7 +69,6 @@ __launch_bounds__(BlockDim) __global__
   static_assert(std::is_same_v<TOut, float>);
 
   static_assert(K % 2 == 0);
-  //  static_assert(TM % 16 == 0);
   static_assert(TN % 4 == 0);
   static_assert(N % 128 == 0);
   static_assert(BlockDim == 256);
@@ -91,11 +91,12 @@ __launch_bounds__(BlockDim) __global__
   const int N_tiles = utils::ceil_div(n, N);
   const int total_tiles = M_tiles * N_tiles;
 
-  auto tile_row_start = block_id / N_tiles;
-  auto tile_col_start = block_id % N_tiles;
+  uint32_t tile_row_start;
+  uint32_t tile_col_start;
+  uint32_t tile_row_start_temp;
+  uint32_t tile_col_start_temp;
 
-  int tile_row_start_temp;
-  int tile_col_start_temp;
+  utils::map_to_hilbert(block_id, N_tiles, tile_col_start, tile_row_start);
 
   int head = 0;
   int tail = 0;
@@ -212,7 +213,7 @@ __launch_bounds__(BlockDim) __global__
             (tile_row_start * M + row) * n + tile_col_start * N + col;
         asm volatile(
             "{\n\t"
-            "ld.global.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
+            "ld.global.cs.v4.f32 {%0, %1, %2, %3}, [%4]; \n"
             "}"
             : "=f"(RmemC[m_thread][n_thread + 0]),
               "=f"(RmemC[m_thread][n_thread + 1]),
@@ -224,8 +225,8 @@ __launch_bounds__(BlockDim) __global__
 
     block_id += gridDim.x;
     if (block_id < total_tiles) {
-      tile_row_start_temp = block_id / N_tiles;
-      tile_col_start_temp = block_id % N_tiles;
+      utils::map_to_hilbert(block_id, N_tiles, tile_col_start_temp,
+                            tile_row_start_temp);
       head = 0;
       tail = 0;
 
@@ -269,7 +270,7 @@ __launch_bounds__(BlockDim) __global__
 
         asm volatile(
             "{\n\t"
-            "st.global.v4.f32 [%0], {%1, %2, %3, %4}; \n"
+            "st.global.cs.v4.f32 [%0], {%1, %2, %3, %4}; \n"
             "}" ::"l"(d + output_offset),
             "f"(RmemD[m_thread * TN + n_thread + 0]),
             "f"(RmemD[m_thread * TN + n_thread + 1]),

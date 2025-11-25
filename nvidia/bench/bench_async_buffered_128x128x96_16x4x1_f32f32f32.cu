@@ -21,6 +21,12 @@ int main() {
       nvidia::kernel_functors::async_buffered_gemm<float, float, M, N, K, TM,
                                                    TN, TK>;
   benchmark::benchmark<kernel_functor_struct, float, float>(
-      {{1024, 1024, 1024}, {2048, 2048, 2048}, {4096, 4096, 4096}}, alpha,
-      beta);
+      {{128, 128, 128},
+       {256, 256, 256},
+       {512, 512, 512},
+       {1024, 1024, 1024},
+       {2048, 2048, 2048},
+       {4096, 4096, 4096},
+       {8192, 8192, 8192}},
+      alpha, beta);
 }
