@@ -83,7 +83,7 @@ struct cublasLt_gemm {
   template <typename T>
   auto get_compute_type() {
     if constexpr (std::is_same_v<T, float>) {
-      return CUBLAS_COMPUTE_32F;
+      return CUBLAS_COMPUTE_32F_FAST_TF32;
     }
     if constexpr (std::is_same_v<T, __half>) {
       return CUDA_R_16F;
