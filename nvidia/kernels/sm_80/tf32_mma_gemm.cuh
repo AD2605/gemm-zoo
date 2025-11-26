@@ -227,17 +227,15 @@ __launch_bounds__(BlockDim) __global__
                   "{%0, %1, %2, %3}, "
                   "{%4, %5, %6, %7}, "
                   "{%8, %9}, "
-                  "{%10, %11, %12, %13}; \n"
-                  : "=f"(C_regs[_m][_n][0]), "=f"(C_regs[_m][_n][1]),
-                    "=f"(C_regs[_m][_n][2]), "=f"(C_regs[_m][_n][3])
+                  "{%0, %1, %2, %3}; \n"
+                  : "+f"(C_regs[_m][_n][0]), "+f"(C_regs[_m][_n][1]),
+                    "+f"(C_regs[_m][_n][2]), "+f"(C_regs[_m][_n][3])
                   : "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][0])),
                     "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][1])),
                     "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][2])),
                     "r"(*reinterpret_cast<int32_t*>(&A_regs[_k][_m][3])),
                     "r"(*reinterpret_cast<int32_t*>(&B_regs[_k][_n][0])),
-                    "r"(*reinterpret_cast<int32_t*>(&B_regs[_k][_n][1])),
-                    "f"(C_regs[_m][_n][0]), "f"(C_regs[_m][_n][1]),
-                    "f"(C_regs[_m][_n][2]), "f"(C_regs[_m][_n][3]));
+                    "r"(*reinterpret_cast<int32_t*>(&B_regs[_k][_n][1])));
             }
           }
         }
