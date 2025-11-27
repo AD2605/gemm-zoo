@@ -151,7 +151,7 @@ __launch_bounds__(BlockDim) __global__
     if (threadIdx.x == 0) {
       for (int i = 0; i < NumBuffers; i++) {
         asm volatile(
-            "mbarrier.init.shared.b64 [%0], %1; \n\t" ::"r"(mbarriers + i * 64),
+            "mbarrier.init.shared.b64 [%0], %1; \n\t" ::"r"(mbarriers + i * 8),
             "r"(blockDim.x + 1));
       }
     }
@@ -175,7 +175,7 @@ __launch_bounds__(BlockDim) __global__
             k_load_index, n);
         asm volatile(
             "cp.async.mbarrier.arrive.noinc.shared.b64 [%0]; \n\t" ::"r"(
-                mbarriers + tail * 64));
+                mbarriers + tail * 8));
         k_load_index += K;
         tail = (tail + 1) % NumBuffers;
       }
@@ -186,7 +186,7 @@ __launch_bounds__(BlockDim) __global__
         uint64_t state;
         asm volatile("mbarrier.arrive.release.cta.shared.b64 %0, [%1];\n"
                      : "=l"(state)
-                     : "r"(mbarriers + head * 64));
+                     : "r"(mbarriers + head * 8));
         int complete = 0;
         do {
           asm volatile(
@@ -196,7 +196,7 @@ __launch_bounds__(BlockDim) __global__
               "selp.u32 %0, 1, 0, %%p;\n\t"
               "}\n\t"
               : "=r"(complete)
-              : "r"(mbarriers + head * 64), "l"(state)
+              : "r"(mbarriers + head * 8), "l"(state)
               : "memory");
         } while (!complete);
       }
@@ -282,7 +282,7 @@ __launch_bounds__(BlockDim) __global__
             k_load_index, n);
         asm volatile(
             "cp.async.mbarrier.arrive.noinc.shared.b64 [%0]; \n\t" ::"r"(
-                mbarriers + tail * 64));
+                mbarriers + tail * 8));
         k_load_index += K;
         tail = (tail + 1) % NumBuffers;
       }
