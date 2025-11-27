@@ -24,7 +24,7 @@ struct async_buffered_gemm {
     static_assert(TN % 4 == 0);
     static_assert(M % (256 / 8) == 0);
 
-    smem_size_required = 3 * K * sizeof(TIn) * (M + N);
+    smem_size_required = 3 * K * sizeof(TIn) * (M + N) + 3 * sizeof(uint64_t);
     assert(smem_size_required < properties.sharedMemPerMultiprocessor);
 
     checkCudaError(cudaFuncSetAttribute(

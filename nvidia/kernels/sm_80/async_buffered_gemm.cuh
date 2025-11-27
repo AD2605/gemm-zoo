@@ -77,6 +77,7 @@ __launch_bounds__(BlockDim) __global__
   constexpr int32_t sizeof_TIn = static_cast<int32_t>(sizeof(TIn));
   int32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   int32_t smem_b_addr = smem_a_addr + M * K * sizeof_TIn * NumBuffers;
+  int32_t mbarriers = smem_b_addr + K * N * sizeof_TIn * NumBuffers;
 
   int block_id = blockIdx.x;
   int warp_id = threadIdx.x / 32;
@@ -96,12 +97,19 @@ __launch_bounds__(BlockDim) __global__
   uint32_t tile_row_start_temp;
   uint32_t tile_col_start_temp;
 
+  if (threadIdx.x == 0) {
+    for (int i = 0; i < NumBuffers; i++) {
+      asm volatile(
+          "mbarrier.init.shared.b64 [%0], %1; \n\t" ::"r"(mbarriers + i * 64),
+          "r"(blockDim.x + 1));
+    }
+  }
+
   utils::map_to_hilbert(block_id, N_tiles, tile_col_start, tile_row_start);
 
   int head = 0;
   int tail = 0;
-
-  // start the transfer of all the buffers;
+  __syncthreads();
   int k_load_index = 0;
 #pragma unroll(NumBuffers)
   for (int i = 0; i < NumBuffers; i++) {
@@ -112,7 +120,8 @@ __launch_bounds__(BlockDim) __global__
       detail::async_populate_smemB_buffer<K, N, BlockDim, TIn>(
           smem_b_addr + tail * K * N * sizeof_TIn, b, tile_col_start,
           k_load_index, n);
-      asm volatile("cp.async.commit_group;\n");
+      asm volatile("cp.async.mbarrier.arrive.noinc.shared.b64 [%0]; \n\t" ::"r"(
+          mbarriers + tail * 64));
       k_load_index += K;
       tail = (tail + 1) % NumBuffers;
     }
@@ -125,7 +134,24 @@ __launch_bounds__(BlockDim) __global__
     }
 
     for (int kk = 0; kk < k; kk += K) {
-      asm volatile("cp.async.wait_group 1; \n");
+      if (threadIdx.x == 0) {
+        uint64_t state;
+        asm volatile("mbarrier.arrive.release.cta.shared.b64 %0, [%1];\n"
+                     : "=l"(state)
+                     : "r"(mbarriers + head * 64));
+        int complete = 0;
+        do {
+          asm volatile(
+              "{\n\t"
+              ".reg .pred %%p;\n\t"
+              "mbarrier.test_wait.shared.b64 %%p, [%1], %2;\n\t"
+              "selp.u32 %0, 1, 0, %%p;\n\t"
+              "}\n\t"
+              : "=r"(complete)
+              : "r"(mbarriers + head * 64), "l"(state)
+              : "memory");
+        } while (!complete);
+      }
       __syncthreads();
 
       int32_t smem_a_k_addr = smem_a_addr + head * M * K * sizeof_TIn;
@@ -195,7 +221,9 @@ __launch_bounds__(BlockDim) __global__
         detail::async_populate_smemB_buffer<K, N, BlockDim, TIn>(
             smem_b_addr + tail * K * N * sizeof_TIn, b, tile_col_start,
             k_load_index, n);
-        asm volatile("cp.async.commit_group;\n");
+        asm volatile(
+            "cp.async.mbarrier.arrive.noinc.shared.b64 [%0]; \n\t" ::"r"(
+                mbarriers + tail * 64));
         k_load_index += K;
         tail = (tail + 1) % NumBuffers;
       }
@@ -241,7 +269,9 @@ __launch_bounds__(BlockDim) __global__
           detail::async_populate_smemB_buffer<K, N, BlockDim, TIn>(
               smem_b_addr + tail * K * N * sizeof_TIn, b, tile_col_start_temp,
               k_load_index, n);
-          asm volatile("cp.async.commit_group;\n");
+          asm volatile(
+              "cp.async.mbarrier.arrive.noinc.shared.b64 [%0]; \n\t" ::"r"(
+                  mbarriers + tail * 64));
           k_load_index += K;
           tail = (tail + 1) % NumBuffers;
         }

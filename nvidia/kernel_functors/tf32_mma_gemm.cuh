@@ -4,6 +4,7 @@
 #include "defines.hpp"
 #include "kernels/sm_80/tf32_mma_gemm.cuh"
 
+#include <cstdint>
 #include <cuda_runtime.h>
 
 #include <cassert>
@@ -22,7 +23,7 @@ struct tf32_mma_gemm {
 
     static_assert(M % (256 / 8) == 0);
 
-    smem_size_required = 3 * K * sizeof(TIn) * (M + N);
+    smem_size_required = 3 * K * sizeof(TIn) * (M + N) + 3 * sizeof(uint64_t);
     assert(smem_size_required < properties.sharedMemPerMultiprocessor);
 
     checkCudaError(cudaFuncSetAttribute(
