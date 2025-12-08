@@ -6,6 +6,7 @@
 #include <cublasLt.h>
 
 namespace utils {
+
 template <typename T>
 cudaDataType_t get_cubaslt_datatype() {
   if constexpr (std::is_same_v<T, float>) {
@@ -17,7 +18,32 @@ cudaDataType_t get_cubaslt_datatype() {
   if constexpr (std::is_same_v<T, __nv_bfloat16>) {
     return CUDA_R_16BF;
   }
+  if constexpr (std::is_same_v<T, __nv_fp8_e4m3>) {
+    return CUDA_R_8F_E4M3;
+  }
+  if constexpr (std::is_same_v<T, __nv_fp8_e5m2>) {
+    return CUDA_R_8F_E5M2;
+  }
   throw std::runtime_error("Unsupported Datatype");
+}
+
+template <typename T>
+auto get_compute_type() {
+  if constexpr (std::is_same_v<T, float>) {
+    return CUBLAS_COMPUTE_32F_FAST_TF32;
+  }
+  if constexpr (std::is_same_v<T, __half>) {
+    return CUBLAS_COMPUTE_16F;
+    ;
+  }
+  if constexpr (std::is_same_v<T, __nv_bfloat16>) {
+    return CUBLAS_COMPUTE_32F_FAST_16BF;
+  }
+  if constexpr (std::is_same_v<T, __nv_fp8_e4m3> ||
+                std::is_same_v<T, __nv_fp8_e5m2>) {
+    return CUBLAS_COMPUTE_16F;  // GROK PLEASE CHECK IF THIS IS EVEN CORRECT
+  }
+  return CUBLAS_COMPUTE_32F;
 }
 
 template <typename TA, typename TB, typename TC, typename TD>
@@ -40,8 +66,9 @@ void cublaslt_gemm(const TA* a, const TB* b, const TC* c, TD* d, int m, int n,
                              n);
 
   cublasLtMatmulDesc_t matmulDesc;
-  cublasComputeType_t computeType = CUBLAS_COMPUTE_32F;
-  cublasLtMatmulDescCreate(&matmulDesc, computeType, CUDA_R_32F);
+  cublasComputeType_t computeType = get_compute_type<TA>();
+  cublasLtMatmulDescCreate(&matmulDesc, computeType,
+                           get_cubaslt_datatype<TD>());
 
   cublasOperation_t opTranspose = CUBLAS_OP_N;
   cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSA,

@@ -1,17 +1,15 @@
 #include "kernel_functors/cublaslt_gemm.cuh"
 #include "utils/benchmark.cuh"
 
-#include <cuda_runtime.h>
-
-#include <tuple>
+#include <cuda_bf16.h>
 
 int main() {
   float alpha = 1.0f;
   float beta = 1.0f;
-
+  using bf16_t = __nv_bfloat16;
   using kernel_functor_struct =
-      nvidia::kernel_functors::cublasLt_gemm<float, float>;
-  benchmark::benchmark<kernel_functor_struct, float, float>(
+      nvidia::kernel_functors::cublasLt_gemm<bf16_t, float>;
+  benchmark::benchmark<kernel_functor_struct, bf16_t, float>(
       {{128, 128, 128},
        {256, 256, 256},
        {512, 512, 512},

@@ -2,9 +2,13 @@
 #define CUBLASLT_GEMM_CUH
 
 #include <cublasLt.h>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <cuda_fp8.h>
 #include <cuda_runtime.h>
 
 #include <stdexcept>
+#include <type_traits>
 
 namespace nvidia::kernel_functors {
 template <typename TIn, typename TOut>
@@ -23,7 +27,8 @@ struct cublasLt_gemm {
     cublasLtMatrixLayoutCreate(&layoutD, get_cubaslt_datatype<TOut>(), m, n, n);
 
     cublasComputeType_t computeType = get_compute_type<TIn>();
-    cublasLtMatmulDescCreate(&matmulDesc, computeType, CUDA_R_32F);
+    cublasLtMatmulDescCreate(&matmulDesc, computeType,
+                             get_cubaslt_datatype<TOut>());
 
     cublasOperation_t opTranspose = CUBLAS_OP_N;
     cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSA,
@@ -77,6 +82,12 @@ struct cublasLt_gemm {
     if constexpr (std::is_same_v<T, __nv_bfloat16>) {
       return CUDA_R_16BF;
     }
+    if constexpr (std::is_same_v<T, __nv_fp8_e4m3>) {
+      return CUDA_R_8F_E4M3;
+    }
+    if constexpr (std::is_same_v<T, __nv_fp8_e5m2>) {
+      return CUDA_R_8F_E5M2;
+    }
     throw std::runtime_error("Unsupported Datatype");
   }
 
@@ -86,12 +97,17 @@ struct cublasLt_gemm {
       return CUBLAS_COMPUTE_32F_FAST_TF32;
     }
     if constexpr (std::is_same_v<T, __half>) {
-      return CUDA_R_16F;
+      return CUBLAS_COMPUTE_16F;
+      ;
     }
     if constexpr (std::is_same_v<T, __nv_bfloat16>) {
-      return CUDA_R_16BF;
+      return CUBLAS_COMPUTE_32F_FAST_16BF;
     }
-    throw std::runtime_error("Unsupported Datatype");
+    if constexpr (std::is_same_v<T, __nv_fp8_e4m3> ||
+                  std::is_same_v<T, __nv_fp8_e5m2>) {
+      return CUBLAS_COMPUTE_16F;  // GROK PLEASE CHECK IF THIS IS EVEN CORRECT
+    }
+    return CUBLAS_COMPUTE_32F;
   }
 
   cublasLtHandle_t ltHandle;
