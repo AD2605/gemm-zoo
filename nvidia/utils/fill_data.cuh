@@ -25,8 +25,8 @@ __global__ void populate_with_random_kernel(T *device_ptr,
   auto local_state = d_states[idx];
 
   for (; idx < num_elements; idx += blockDim.x * gridDim.x) {
-    float rnd = curand_normal(&local_state) * 4 - 2;
-    device_ptr[idx] = static_cast<T>(static_cast<int32_t>(rnd));
+    float rnd = curand_normal(&local_state);
+    device_ptr[idx] = static_cast<T>(rnd);
   }
 }
 
