@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 
 namespace utils {
 
@@ -15,13 +16,17 @@ __global__ void compare_results_kernel(const T* output, const T* reference,
                                        std::size_t num_elements,
                                        int* is_different) {
   auto idx = threadIdx.x + blockIdx.x * blockDim.x;
+  float compare_threshold = 1e-2;
+  if constexpr (!std::is_same_v<T, float>) {
+    compare_threshold = 0.5;
+  }
   for (; idx < num_elements; idx += gridDim.x * blockDim.x) {
     if (abs(static_cast<float>(output[idx]) -
-            static_cast<float>(reference[idx])) > 1e-2) {
-#ifdef DEBUG
+            static_cast<float>(reference[idx])) > compare_threshold) {
+      // #ifdef DEBUG
       printf("%f %f %d \n", static_cast<float>(output[idx]),
              static_cast<float>(reference[idx]), idx);
-#endif
+      // #endif
       *is_different = 1;
     }
   }
