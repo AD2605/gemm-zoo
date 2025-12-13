@@ -12,8 +12,8 @@ int main() {
   constexpr int N = 128;
   constexpr int K = 32;
 
-  float alpha = __half(1.0f);
-  float beta = __half(1.0f);
+  float alpha = 1.0f;
+  float beta = 1.0f;
 
   using kernel_functor_struct =
       nvidia::kernel_functors::bf16_mma_gemm<bf16_t, float, M, N, K>;
