@@ -241,8 +241,8 @@ __launch_bounds__(NumThreads, 1) __global__
                             byte_offset;
           asm volatile("st.shared.v2.f32 [%0], {%1, %2};\n" ::"r"(smem_c_addr +
                                                                   smem_offset),
-                       "f"(c_regs[i / MMA_M][j / MMA_N][reg_number]),
-                       "f"(c_regs[i / MMA_M][j / MMA_N][reg_number + 1])
+                       "f"(c_regs[i / MMA_M][j / MMA_N][reg_number * 2]),
+                       "f"(c_regs[i / MMA_M][j / MMA_N][reg_number * 2 + 1])
                        : "memory");
         }
       }
