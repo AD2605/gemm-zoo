@@ -36,7 +36,8 @@ struct bf16_mma_gemm {
     assert(smem_size_required < properties.sharedMemPerMultiprocessor);
 
     checkCudaError(cudaFuncSetAttribute(
-        nvidia::kernels::sm80::bf16_mma_gemm<M, N, K, WM, WN, NumBuffers, num_threads>,
+        nvidia::kernels::sm80::bf16_mma_gemm<M, N, K, WM, WN, NumBuffers,
+                                             num_threads>,
         cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size_required));
     auto num_sms = static_cast<std::size_t>(properties.multiProcessorCount);
     blockDim = dim3(num_threads, 1, 1);

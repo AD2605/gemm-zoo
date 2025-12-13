@@ -108,12 +108,11 @@ __launch_bounds__(NumThreads) __global__
       asm volatile("cp.async.wait_group 1; \n");
       __syncthreads();
 
-      float* smem_b_ptr = reinterpret_cast<float*>(smem) +
-                          NumBuffers * BM * BK + head * BK * BN;
       int32_t smem_a_head_addr = smem_a_addr + head * BM * BK * 4;
+      int32_t smem_b_head_addr = smem_b_addr + head * BK * BN * 4;
       // m16n8k8
       uint32_t A_regs[WM / MMA_M][2][TM];  // 2 x 4 x 4
-      float B_regs[WM / MMA_M][2][TN];     // 2 x 4 x 2
+      uint32_t B_regs[WN / MMA_N][2][TN];  // 2 x 4 x 2
 
 #pragma unroll
       for (int _k = 0; _k < BK; _k += MMA_K) {
@@ -122,10 +121,14 @@ __launch_bounds__(NumThreads) __global__
 #pragma unroll
         for (int _n = 0; _n < WN / MMA_N; _n++) {
           int b_col = smem_load_b_offset + _n * MMA_N;
-          int index_0 = utils::swizzle<B, M, S_B>(b_row0 * BN + b_col);
-          int index_1 = utils::swizzle<B, M, S_B>(b_row1 * BN + b_col);
-          B_regs[_n][_k % 2][0] = smem_b_ptr[index_0];
-          B_regs[_n][_k % 2][1] = smem_b_ptr[index_1];
+          const int index_0 = utils::swizzle<B, M, S_B>(b_row0 * BN + b_col);
+          const int index_1 = utils::swizzle<B, M, S_B>(b_row1 * BN + b_col);
+          asm volatile("ld.shared.b32 %0, [%1]; \n"
+                       : "=r"(B_regs[_n][_k % 2][0])
+                       : "r"(smem_b_head_addr + index_0 * 4));
+          asm volatile("ld.shared.b32 %0, [%1]; \n"
+                       : "=r"(B_regs[_n][_k % 2][1])
+                       : "r"(smem_b_head_addr + index_1 * 4));
         }
 #pragma unroll
         for (int _m = 0; _m < WM / MMA_M; _m++) {
@@ -141,7 +144,7 @@ __launch_bounds__(NumThreads) __global__
         }
 #pragma unroll
         for (int _m = 0; _m < WM / MMA_M; _m++) {
-          for (int _n = 0; _n < WM / MMA_N; _n++) {
+          for (int _n = 0; _n < WN / MMA_N; _n++) {
             asm volatile(
                 "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 "
                 "{%0, %1, %2, %3}, "
@@ -152,8 +155,7 @@ __launch_bounds__(NumThreads) __global__
                   "+f"(C_regs[_m][_n][2]), "+f"(C_regs[_m][_n][3])
                 : "r"(A_regs[_m][_k % 2][0]), "r"(A_regs[_m][_k % 2][1]),
                   "r"(A_regs[_m][_k % 2][2]), "r"(A_regs[_m][_k % 2][3]),
-                  "r"(*reinterpret_cast<int32_t*>(&B_regs[_n][_k][0])),
-                  "r"(*reinterpret_cast<int32_t*>(&B_regs[_n][_k][1])));
+                  "r"(B_regs[_n][_k % 2][0]), "r"(B_regs[_n][_k % 2][1]));
           }
         }
       }
