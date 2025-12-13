@@ -29,13 +29,14 @@ struct bf16_mma_gemm {
 
     constexpr int num_warps = (M / WM) * (N / WN);
     constexpr int num_threads = num_warps * 32;
+    constexpr int NumBuffers = 6;
 
     smem_size_required =
-        3 * K * sizeof(TIn) * (M + N) + WN * num_warps * sizeof(TIn);
+        NumBuffers * K * sizeof(TIn) * (M + N) + WN * num_warps * sizeof(TIn);
     assert(smem_size_required < properties.sharedMemPerMultiprocessor);
 
     checkCudaError(cudaFuncSetAttribute(
-        nvidia::kernels::sm80::bf16_mma_gemm<M, N, K, WM, WN, 3, num_threads>,
+        nvidia::kernels::sm80::bf16_mma_gemm<M, N, K, WM, WN, NumBuffers, num_threads>,
         cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size_required));
     auto num_sms = static_cast<std::size_t>(properties.multiProcessorCount);
     blockDim = dim3(num_threads, 1, 1);
@@ -50,7 +51,7 @@ struct bf16_mma_gemm {
                   const TOut alpha, const TOut beta, cudaStream_t stream) {
     constexpr int WM = 64;
     constexpr int WN = 64;
-    constexpr int NumBuffers = 3;
+    constexpr int NumBuffers = 6;
     constexpr int num_warps = (M / WM) * (N / WN);
     constexpr int num_threads = num_warps * 32;
     nvidia::kernels::sm80::bf16_mma_gemm<M, N, K, WM, WN, NumBuffers,
