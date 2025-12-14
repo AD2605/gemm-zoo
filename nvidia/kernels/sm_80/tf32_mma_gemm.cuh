@@ -52,7 +52,6 @@ __launch_bounds__(NumThreads) __global__
 
   int group_id = lane_id >> 2;
   int thread_id_in_group = lane_id % 4;
-  constexpr int NumWarps = NumThreads / 32;
 
   constexpr int MMA_M = 16;
   constexpr int MMA_N = 8;

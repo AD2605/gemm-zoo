@@ -5,6 +5,7 @@
 #include "cublaslt_gemm.cuh"
 #include "defines.hpp"
 #include "fill_data.cuh"
+#include "kernel_functors/generic_gemm.cuh"
 
 #include <cstddef>
 #include <cuda_runtime.h>
@@ -56,9 +57,14 @@ void benchmark_impl(std::size_t m, std::size_t n, std::size_t k, TOut alpha,
          stream);
   checkCudaError(cudaGetLastError());
   checkCudaError(cudaStreamSynchronize(stream));
-
-  utils::cublaslt_gemm(a_matrices[0], b_matrices[0], c_matrices[0], d_ref, m, n,
-                       k, alpha, beta, stream);
+  try {
+    utils::cublaslt_gemm(a_matrices[0], b_matrices[0], c_matrices[0], d_ref, m,
+                         n, k, alpha, beta, stream);
+  } catch (...) {
+    nvidia::kernel_functors::generic_gemm<TIn, TOut> reference_gemm(m, n, k);
+    reference_gemm(a_matrices[0], b_matrices[0], c_matrices[0], d_ref, alpha,
+                   beta, stream);
+  }
   checkCudaError(cudaGetLastError());
   cudaStreamSynchronize(stream);
 
