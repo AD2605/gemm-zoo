@@ -39,7 +39,7 @@ __launch_bounds__(NumThreads, 1) __global__
   int32_t block_id = blockIdx.x;
 
   constexpr int MMA_M = 16;
-  constexpr int MMA_K = 16;
+  constexpr int MMA_K = 8;
   constexpr int MMA_N = 8;
 
   constexpr int num_warps_per_row = BN / WN;
@@ -79,94 +79,78 @@ __launch_bounds__(NumThreads, 1) __global__
     }
 
     for (int kk = 0; kk < k; kk += BK) {
-      uint32_t a_regs[WM / MMA_M][BK / MMA_K][4];
-      uint32_t b_regs[WN / MMA_N][BK / MMA_K][2];
+      uint32_t a_regs[WM / MMA_M][BK / MMA_K][2];
+      uint32_t b_regs[WN / MMA_N][BK / MMA_K][1];
       asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 2));
 
       __syncthreads();
+
 #pragma unroll
-      for (int i = 0; i < BK / MMA_K; i++) {
-        const int logical_col_start = i * MMA_K;
-        const int logical_col_offset = (num_matrix / 2) * 8;
-        const int logical_col = logical_col_start + logical_col_offset;
+      for (int _k = 0; _k < BK; _k += MMA_K) {
+        constexpr int NumBanks = 32;
+        constexpr int BankSize = 4;
+        constexpr int elements_per_copy = 16 / sizeof(T);
+        constexpr int M = utils::log2_floor(elements_per_copy);
+        constexpr int B =
+            utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
+        constexpr int S_A = utils::log2_floor(BK) - M;
+        constexpr int S_B = utils::log2_floor(BN) - M;
+        const int base_smem_a_address =
+            smem_a_addr + head * BM * BK * static_cast<int32_t>(sizeof(T));
+        const int smem_a_base_index =
+            (warp_row * WM + num_matrix * 8 + lane_id % 8) * BK;
+        const int base_smem_b_address =
+            smem_b_addr + head * BK * BN * static_cast<int32_t>(sizeof(T));
+        const int smem_b_base_index =
+            (lane_id % 8) * BN + warp_col * WN + num_matrix * 8;
+        // each time we load 32 rows, and thus 2 matrices; in one go for a;
+
 #pragma unroll
-        for (int j = 0; j < WM / MMA_M; j++) {
-          constexpr int NumBanks = 32;
-          constexpr int BankSize = 4;
-          constexpr int elements_per_copy = 16 / sizeof(T);
-          constexpr int M = utils::log2_floor(elements_per_copy);
-          constexpr int B =
-              utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
-          constexpr int S = utils::log2_floor(BK) - M;
-
-          const int logical_row_start = warp_row * WM + j * MMA_M;
-          const int logical_row_offset = (num_matrix % 2) * 8 + (lane_id % 8);
-          const int logical_row = logical_row_start + logical_row_offset;
-          const int logical_addr = logical_row * BK + logical_col;
-          const int swizzled_index = utils::swizzle<B, M, S>(logical_addr);
-          const int swizzled_index_addr = swizzled_index * sizeof(T);
-
-          uint32_t row_addr =
-              smem_a_addr + head * BM * BK * sizeof(T) + swizzled_index_addr;
-
+        for (int _m = 0; _m < WM / MMA_M; _m += 2) {
+          int index = smem_a_base_index + _m * MMA_M * BK + _k;
+          int swizzled_address = utils::swizzle<B, M, S_A>(index) *
+                                 static_cast<int32_t>(sizeof(T));
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
               "%3}, [%4];\n"
-              : "=r"(a_regs[j][i][0]), "=r"(a_regs[j][i][1]),
-                "=r"(a_regs[j][i][2]), "=r"(a_regs[j][i][3])
-              : "r"(row_addr));
+              : "=r"(a_regs[_m][_k][0]), "=r"(a_regs[_m][_k][1]),
+                "=r"(a_regs[_m + 1][_k][0]), "=r"(a_regs[_m + 1][_k][1])
+              : "r"(base_smem_a_address + swizzled_address));
         }
-      }
+
+        // each time we load MMA_N * 4 = 32 columns in one go for B; Thus
+        // increment it by 4;
 
 #pragma unroll
-      for (int i = 0; i < BK / MMA_K; i++) {
-        const int logical_row =
-            i * MMA_K + (num_matrix % 2) * 8 + (lane_id % 8);
-#pragma unroll
-        for (int j = 0; j < WN / MMA_N; j += 2) {
-          constexpr int NumBanks = 32;
-          constexpr int BankSize = 4;
-          constexpr int elements_per_copy = 16 / sizeof(T);
-          constexpr int M = utils::log2_floor(elements_per_copy);
-          constexpr int B =
-              utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
-          constexpr int S = utils::log2_floor(BN) - M;
-          const int logical_col =
-              warp_col * WN + j * MMA_N + (num_matrix / 2) * 8;
-          const int logical_index = logical_row * BN + logical_col;
-          const int swizzled_index = utils::swizzle<B, M, S>(logical_index);
-          const int32_t swizzle_addr = swizzled_index * sizeof(T);
-          uint32_t row_addr =
-              smem_b_addr + head * BK * BN * sizeof(T) + swizzle_addr;
-
+        for (int _n = 0; _n < WN / MMA_N; _n += 2) {
+          int index = smem_b_base_index + _k * BN + _n * MMA_N;
+          int swizzled_address = utils::swizzle<B, M, S_B>(index) *
+                                 static_cast<int32_t>(sizeof(T));
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
               "{%0, %1, %2, %3}, [%4];\n"
-              : "=r"(b_regs[j + 0][i][0]), "=r"(b_regs[j + 0][i][1]),
-                "=r"(b_regs[j + 1][i][0]), "=r"(b_regs[j + 1][i][1])
-              : "r"(row_addr));
+              : "=r"(b_regs[_n][_k][0]), "=r"(b_regs[_n + 1][_k][0]),
+                "=r"(b_regs[_n + 2][_k][0]), "=r"(b_regs[_n + 3][_k][0])
+              : "r"(base_smem_b_address + swizzled_address));
         }
-      }
 
 #pragma unroll
-      for (int _k = 0; _k < BK / MMA_K; _k++) {
+        for (int _n = 0; _n < WN / MMA_N; _n++) {
 #pragma unroll
-        for (int _m = 0; _m < WM / MMA_M; _m++) {
-#pragma unroll
-          for (int _n = 0; _n < WN / MMA_N; _n++) {
+          for (int _m = 0; _m < WM / MMA_M; _m++) {
             asm volatile(
-                "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 "
-                "{%0, %1}, "
-                "{%2, %3, %4, %5}, "
-                "{%6, %7}, "
+                "mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16"
+                "{%0, %1},"
+                "{%2, %3},"
+                "{%4},"
                 "{%0, %1}; \n"
                 : "+r"(c_regs[_m][_n][0]), "+r"(c_regs[_m][_n][1])
                 : "r"(a_regs[_m][_k][0]), "r"(a_regs[_m][_k][1]),
-                  "r"(a_regs[_m][_k][2]), "r"(a_regs[_m][_k][3]),
-                  "r"(b_regs[_n][_k][0]), "r"(b_regs[_n][_k][1]));
+                  "r"(b_regs[_n][_k][0]));
           }
         }
       }
+
       head = (head + 1) % NumBuffers;
       if (k_load_index < k) {
         async_load::load_swizzled<T, BM, BK, NumThreads>(
