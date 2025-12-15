@@ -22,7 +22,7 @@ struct bf16_mma_gemm {
     assert(m % M == 0);
     assert(n % N == 0);
     assert(k % K == 0);
-    constexpr int WM = 64;
+    constexpr int WM = 32;
     constexpr int WN = 64;
     static_assert(M % 64 == 0);
     static_assert(N % 64 == 0);
@@ -50,7 +50,7 @@ struct bf16_mma_gemm {
 
   void operator()(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                   const TOut alpha, const TOut beta, cudaStream_t stream) {
-    constexpr int WM = 64;
+    constexpr int WM = 32;
     constexpr int WN = 64;
     constexpr int NumBuffers = 6;
     constexpr int num_warps = (M / WM) * (N / WN);

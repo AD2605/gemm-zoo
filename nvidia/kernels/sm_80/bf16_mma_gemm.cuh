@@ -26,12 +26,12 @@ __launch_bounds__(NumThreads, 1) __global__
   int num_matrix = lane_id / 8;
   int warp_id = threadIdx.x / 32;
   // Pad to ensure alignment (multiple of 256 bytes for safety)
-  int32_t a_buffer_size = NumBuffers * BM * BK * sizeof(T);
-  int32_t b_buffer_size = NumBuffers * BK * BN * sizeof(T);
+  constexpr int32_t a_buffer_size = NumBuffers * BM * BK * sizeof(T);
+  constexpr int32_t b_buffer_size = NumBuffers * BK * BN * sizeof(T);
   uint32_t smem_a_addr = static_cast<int32_t>(__cvta_generic_to_shared(smem));
   uint32_t smem_b_addr = smem_a_addr + a_buffer_size;
-  uint32_t smem_c_addr =
-      smem_b_addr + b_buffer_size + warp_id * WN * sizeof(float);
+  uint32_t smem_c_addr = smem_b_addr + b_buffer_size +
+                         warp_id * WN * static_cast<int32_t>(sizeof(float));
 
   int head = 0;
   int tail = 0;
@@ -57,11 +57,11 @@ __launch_bounds__(NumThreads, 1) __global__
   for (int i = 0; i < NumBuffers; i++) {
     if (k_load_index < k) {
       async_load::load_swizzled<T, BM, BK, NumThreads>(
-          a, smem_a_addr + tail * BM * BK * sizeof(T), k, block_row * BM,
-          k_load_index);
+          a, smem_a_addr + tail * BM * BK * static_cast<int32_t>(sizeof(T)), k,
+          block_row * BM, k_load_index);
       async_load::load_swizzled<T, BK, BN, NumThreads>(
-          b, smem_b_addr + tail * BK * BN * sizeof(T), n, k_load_index,
-          block_col * BN);
+          b, smem_b_addr + tail * BK * BN * static_cast<int32_t>(sizeof(T)), n,
+          k_load_index, block_col * BN);
 
       asm volatile("cp.async.commit_group;\n");
       tail = (tail + 1) % NumBuffers;
@@ -84,7 +84,7 @@ __launch_bounds__(NumThreads, 1) __global__
     for (int kk = 0; kk < k; kk += BK) {
       uint32_t a_regs[WM / MMA_M][BK / MMA_K][4];
       uint32_t b_regs[WN / MMA_N][BK / MMA_K][2];
-      asm volatile("cp.async.wait_group %0; \n" ::"n"(0));
+      asm volatile("cp.async.wait_group %0; \n" ::"n"(1));
 
       __syncthreads();
 #pragma unroll
@@ -107,10 +107,12 @@ __launch_bounds__(NumThreads, 1) __global__
           const int logical_row = logical_row_start + logical_row_offset;
           const int logical_addr = logical_row * BK + logical_col;
           const int swizzled_index = utils::swizzle<B, M, S>(logical_addr);
-          const int swizzled_index_addr = swizzled_index * sizeof(T);
+          const int swizzled_index_addr =
+              swizzled_index * static_cast<int32_t>(sizeof(T));
 
-          uint32_t row_addr =
-              smem_a_addr + head * BM * BK * sizeof(T) + swizzled_index_addr;
+          uint32_t row_addr = smem_a_addr +
+                              head * BM * BK * static_cast<int32_t>(sizeof(T)) +
+                              swizzled_index_addr;
 
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
@@ -138,9 +140,11 @@ __launch_bounds__(NumThreads, 1) __global__
               warp_col * WN + j * MMA_N + (num_matrix / 2) * 8;
           const int logical_index = logical_row * BN + logical_col;
           const int swizzled_index = utils::swizzle<B, M, S>(logical_index);
-          const int32_t swizzle_addr = swizzled_index * sizeof(T);
-          uint32_t row_addr =
-              smem_b_addr + head * BK * BN * sizeof(T) + swizzle_addr;
+          const int32_t swizzle_addr =
+              swizzled_index * static_cast<int32_t>(sizeof(T));
+          uint32_t row_addr = smem_b_addr +
+                              head * BK * BN * static_cast<int32_t>(sizeof(T)) +
+                              swizzle_addr;
 
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
@@ -154,9 +158,9 @@ __launch_bounds__(NumThreads, 1) __global__
 #pragma unroll
       for (int _k = 0; _k < BK / MMA_K; _k++) {
 #pragma unroll
-        for (int _m = 0; _m < WM / MMA_M; _m++) {
+        for (int _n = 0; _n < WN / MMA_N; _n++) {
 #pragma unroll
-          for (int _n = 0; _n < WN / MMA_N; _n++) {
+          for (int _m = 0; _m < WM / MMA_M; _m++) {
             asm volatile(
                 "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
                 "{%0, %1, %2, %3}, "
@@ -174,11 +178,11 @@ __launch_bounds__(NumThreads, 1) __global__
       head = (head + 1) % NumBuffers;
       if (k_load_index < k) {
         async_load::load_swizzled<T, BM, BK, NumThreads>(
-            a, smem_a_addr + tail * BM * BK * sizeof(T), k, block_row * BM,
-            k_load_index);
+            a, smem_a_addr + tail * BM * BK * static_cast<int32_t>(sizeof(T)),
+            k, block_row * BM, k_load_index);
         async_load::load_swizzled<T, BK, BN, NumThreads>(
-            b, smem_b_addr + tail * BK * BN * sizeof(T), n, k_load_index,
-            block_col * BN);
+            b, smem_b_addr + tail * BK * BN * static_cast<int32_t>(sizeof(T)),
+            n, k_load_index, block_col * BN);
 
         asm volatile("cp.async.commit_group;\n");
         tail = (tail + 1) % NumBuffers;
@@ -187,10 +191,10 @@ __launch_bounds__(NumThreads, 1) __global__
     }
 
     // Due to lack of registers, Do not load everything at once.
-    constexpr int ChunkLoads = (WM / 2);
+    constexpr int ChunkLoads = WM;
     float bias_regs[ChunkLoads][2];
     const auto base_output_address =
-        (static_cast<int32_t>(block_row) * BM + warp_row * WM) * n +
+        (static_cast<int64_t>(block_row) * BM + warp_row * WM) * n +
         block_col * BN + warp_col * WN + 2 * lane_id;
     const auto base_bias_address = c + base_output_address;
     const auto base_d_address = d + base_output_address;
@@ -213,11 +217,11 @@ __launch_bounds__(NumThreads, 1) __global__
       for (int i = 0; i < NumBuffers; i++) {
         if (k_load_index < k) {
           async_load::load_swizzled<T, BM, BK, NumThreads>(
-              a, smem_a_addr + tail * BM * BK * sizeof(T), k, block_row * BM,
-              k_load_index);
+              a, smem_a_addr + tail * BM * BK * static_cast<int32_t>(sizeof(T)),
+              k, block_row * BM, k_load_index);
           async_load::load_swizzled<T, BK, BN, NumThreads>(
-              b, smem_b_addr + tail * BK * BN * sizeof(T), n, k_load_index,
-              block_col * BN);
+              b, smem_b_addr + tail * BK * BN * static_cast<int32_t>(sizeof(T)),
+              n, k_load_index, block_col * BN);
 
           asm volatile("cp.async.commit_group;\n");
           tail = (tail + 1) % NumBuffers;
