@@ -81,7 +81,7 @@ __launch_bounds__(NumThreads, 1) __global__
     for (int kk = 0; kk < k; kk += BK) {
       uint32_t a_regs[WM / MMA_M][BK / MMA_K][2];
       uint32_t b_regs[WN / MMA_N][BK / MMA_K][1];
-      asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 2));
+      asm volatile("cp.async.wait_group %0; \n" ::"n"(1));
 
       __syncthreads();
 
@@ -113,8 +113,8 @@ __launch_bounds__(NumThreads, 1) __global__
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
               "%3}, [%4];\n"
-              : "=r"(a_regs[_m][_k][0]), "=r"(a_regs[_m][_k][1]),
-                "=r"(a_regs[_m + 1][_k][0]), "=r"(a_regs[_m + 1][_k][1])
+              : "=r"(a_regs[_m][_k / MMA_K][0]), "=r"(a_regs[_m][_k / MMA_K][1]),
+                "=r"(a_regs[_m + 1][_k / MMA_K][0]), "=r"(a_regs[_m + 1][_k / MMA_K][1])
               : "r"(base_smem_a_address + swizzled_address));
         }
 
@@ -122,15 +122,15 @@ __launch_bounds__(NumThreads, 1) __global__
         // increment it by 4;
 
 #pragma unroll
-        for (int _n = 0; _n < WN / MMA_N; _n += 2) {
+        for (int _n = 0; _n < WN / MMA_N; _n += 4) {
           int index = smem_b_base_index + _k * BN + _n * MMA_N;
           int swizzled_address = utils::swizzle<B, M, S_B>(index) *
                                  static_cast<int32_t>(sizeof(T));
           asm volatile(
               "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
               "{%0, %1, %2, %3}, [%4];\n"
-              : "=r"(b_regs[_n][_k][0]), "=r"(b_regs[_n + 1][_k][0]),
-                "=r"(b_regs[_n + 2][_k][0]), "=r"(b_regs[_n + 3][_k][0])
+              : "=r"(b_regs[_n][_k / MMA_K][0]), "=r"(b_regs[_n + 1][_k / MMA_K][0]),
+                "=r"(b_regs[_n + 2][_k / MMA_K][0]), "=r"(b_regs[_n + 3][_k / MMA_K][0])
               : "r"(base_smem_b_address + swizzled_address));
         }
 
@@ -145,8 +145,8 @@ __launch_bounds__(NumThreads, 1) __global__
                 "{%4},"
                 "{%0, %1}; \n"
                 : "+r"(c_regs[_m][_n][0]), "+r"(c_regs[_m][_n][1])
-                : "r"(a_regs[_m][_k][0]), "r"(a_regs[_m][_k][1]),
-                  "r"(b_regs[_n][_k][0]));
+                : "r"(a_regs[_m][_k / MMA_K][0]), "r"(a_regs[_m][_k / MMA_K][1]),
+                  "r"(b_regs[_n][_k / MMA_K][0]));
           }
         }
       }
