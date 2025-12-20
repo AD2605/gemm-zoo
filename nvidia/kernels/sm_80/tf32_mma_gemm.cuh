@@ -86,7 +86,7 @@ __launch_bounds__(NumThreads) __global__
       async_load::load_swizzled<float, BK, BN, NumThreads>(
           b, smem_b_addr + tail * BK * BN * 4, n, k_load_index, block_col * BN);
 
-      asm volatile("cp.async.commit_group %0;\n" ::"n"(NumBuffers - 1));
+      asm volatile("cp.async.commit_group;\n");
       tail = (tail + 1) % NumBuffers;
       k_load_index += BK;
     }
@@ -104,7 +104,7 @@ __launch_bounds__(NumThreads) __global__
     }
 
     for (int kk = 0; kk < k; kk += BK) {
-      asm volatile("cp.async.wait_group 1; \n");
+      asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 1));
       __syncthreads();
 
       int32_t smem_a_head_addr = smem_a_addr + head * BM * BK * 4;
