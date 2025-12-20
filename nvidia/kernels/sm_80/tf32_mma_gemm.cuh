@@ -86,7 +86,7 @@ __launch_bounds__(NumThreads) __global__
       async_load::load_swizzled<float, BK, BN, NumThreads>(
           b, smem_b_addr + tail * BK * BN * 4, n, k_load_index, block_col * BN);
 
-      asm volatile("cp.async.commit_group;\n");
+      asm volatile("cp.async.commit_group %0;\n" ::"n"(NumBuffers - 1));
       tail = (tail + 1) % NumBuffers;
       k_load_index += BK;
     }

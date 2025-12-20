@@ -84,7 +84,7 @@ __launch_bounds__(NumThreads, 1) __global__
     for (int kk = 0; kk < k; kk += BK) {
       uint32_t a_regs[WM / MMA_M][BK / MMA_K][4];
       uint32_t b_regs[WN / MMA_N][BK / MMA_K][2];
-      asm volatile("cp.async.wait_group %0; \n" ::"n"(1));
+      asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 1));
 
       __syncthreads();
 #pragma unroll
