@@ -39,12 +39,16 @@ __launch_bounds__(NumThreads, 1) __global__
   int32_t block_id = blockIdx.x;
 
   constexpr int MMA_M = 16;
-  constexpr int MMA_K = 16;
+  constexpr int MMA_K = 8;
   constexpr int MMA_N = 8;
 
   constexpr int num_warps_per_row = BN / WN;
   int warp_row = warp_id / num_warps_per_row;
   int warp_col = warp_id % num_warps_per_row;
+  const int smem_a_base_index =
+      (warp_row * WM + num_matrix * 8 + (lane_id % 8)) * BK;
+  const int smem_b_base_index =
+      (lane_id % 8) * BN + warp_col * WN + num_matrix * 8;
 
   uint32_t block_row;
   uint32_t block_col;
@@ -67,6 +71,18 @@ __launch_bounds__(NumThreads, 1) __global__
   }
 
   while (block_id < m_tiles * n_tiles) {
+    constexpr int ChunkLoads = 2 * (WM / 4);
+    uint32_t bias_regs[ChunkLoads][2];
+    const auto base_output_address =
+        (static_cast<int64_t>(block_row) * BM + warp_row * WM) * n +
+        block_col * BN + warp_col * WN + 4 * lane_id;
+    const auto base_bias_address = c + base_output_address;
+#pragma unroll
+    for (int i = 0; i < ChunkLoads; i++) {
+      asm volatile("ld.global.cs.v2.b32 {%0, %1}, [%2]; \n"
+                   : "=r"(bias_regs[i][0]), "=r"(bias_regs[i][1])
+                   : "l"(base_bias_address + i * n));
+    }
     uint32_t c_regs[WM / MMA_M][WN / MMA_N][2];
     head = 0;
 
@@ -79,102 +95,117 @@ __launch_bounds__(NumThreads, 1) __global__
     }
 
     for (int kk = 0; kk < k; kk += BK) {
-      uint32_t a_regs[WM / MMA_M][BK / MMA_K][4];
-      uint32_t b_regs[WN / MMA_N][BK / MMA_K][2];
+      uint32_t a_regs[WM / MMA_M][1][2];
+      uint32_t b_regs[WN / MMA_N][1][1];
       asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 1));
-
+      const int smem_base_a_addr =
+          smem_a_addr + head * BM * BK * static_cast<int32_t>(sizeof(T));
+      const int smem_base_b_addr =
+          smem_b_addr + head * BK * BN * static_cast<int32_t>(sizeof(T));
       __syncthreads();
-#pragma unroll
-      for (int i = 0; i < BK / MMA_K; i++) {
-        const int logical_col_start = i * MMA_K;
-        const int logical_col_offset = (num_matrix / 2) * 8;
-        const int logical_col = logical_col_start + logical_col_offset;
-#pragma unroll
-        for (int j = 0; j < WM / MMA_M; j++) {
-          constexpr int NumBanks = 32;
-          constexpr int BankSize = 4;
-          constexpr int elements_per_copy = 16 / sizeof(T);
-          constexpr int M = utils::log2_floor(elements_per_copy);
-          constexpr int B =
-              utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
-          constexpr int S = utils::log2_floor(BK) - M;
-
-          const int logical_row_start = warp_row * WM + j * MMA_M;
-          const int logical_row_offset = (num_matrix % 2) * 8 + (lane_id % 8);
-          const int logical_row = logical_row_start + logical_row_offset;
-          const int logical_addr = logical_row * BK + logical_col;
-          const int swizzled_index = utils::swizzle<B, M, S>(logical_addr);
-          const int swizzled_index_addr = swizzled_index * sizeof(T);
-
-          uint32_t row_addr =
-              smem_a_addr + head * BM * BK * sizeof(T) + swizzled_index_addr;
-
-          asm volatile(
-              "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
-              "%3}, [%4];\n"
-              : "=r"(a_regs[j][i][0]), "=r"(a_regs[j][i][1]),
-                "=r"(a_regs[j][i][2]), "=r"(a_regs[j][i][3])
-              : "r"(row_addr));
-        }
-      }
-
-#pragma unroll
-      for (int i = 0; i < BK / MMA_K; i++) {
-        const int logical_row =
-            i * MMA_K + (num_matrix % 2) * 8 + (lane_id % 8);
-#pragma unroll
-        for (int j = 0; j < WN / MMA_N; j += 2) {
-          constexpr int NumBanks = 32;
-          constexpr int BankSize = 4;
-          constexpr int elements_per_copy = 16 / sizeof(T);
-          constexpr int M = utils::log2_floor(elements_per_copy);
-          constexpr int B =
-              utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
-          constexpr int S = utils::log2_floor(BN) - M;
-          const int logical_col =
-              warp_col * WN + j * MMA_N + (num_matrix / 2) * 8;
-          const int logical_index = logical_row * BN + logical_col;
-          const int swizzled_index = utils::swizzle<B, M, S>(logical_index);
-          const int32_t swizzle_addr = swizzled_index * sizeof(T);
-          uint32_t row_addr =
-              smem_b_addr + head * BK * BN * sizeof(T) + swizzle_addr;
-
-          asm volatile(
-              "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
-              "{%0, %1, %2, %3}, [%4];\n"
-              : "=r"(b_regs[j + 0][i][0]), "=r"(b_regs[j + 0][i][1]),
-                "=r"(b_regs[j + 1][i][0]), "=r"(b_regs[j + 1][i][1])
-              : "r"(row_addr));
-        }
-      }
 
 #pragma unroll
       for (int _k = 0; _k < BK / MMA_K; _k++) {
+        constexpr int NumBanks = 32;
+        constexpr int BankSize = 4;
+        constexpr int elements_per_copy = 16 / sizeof(T);
+        constexpr int M = utils::log2_floor(elements_per_copy);
+        constexpr int B =
+            utils::log2_floor((NumBanks * BankSize) / sizeof(T)) - M;
+        constexpr int S_A = utils::log2_floor(BK) - M;
+        constexpr int S_B = utils::log2_floor(BN) - M;
+
+        // WM = 64; MMA_M = 16 => 2 A matrix loads
+        // WN = 128; MMA_N = 8; => 16 / 4 B matrix loads
+
+        int smem_a_index = smem_a_base_index + _k * MMA_K;
+        int smem_b_index = smem_b_base_index + _k * MMA_K * BN;
+
+        // Load 0:
+        int swizzled_address_a = utils::swizzle<B, M, S_A>(smem_a_index) *
+                                 static_cast<int32_t>(sizeof(T));
+        int swizzled_address_b = utils::swizzle<B, M, S_B>(smem_b_index) *
+                                 static_cast<int32_t>(sizeof(T));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
+            "%3}, [%4];\n"
+            : "=r"(a_regs[0][0][0]), "=r"(a_regs[0][0][1]),
+              "=r"(a_regs[1][0][0]), "=r"(a_regs[1][0][1])
+            : "r"(smem_base_a_addr + swizzled_address_a));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
+            "{%0, %1, %2, %3}, [%4];\n"
+            : "=r"(b_regs[0][0][0]), "=r"(b_regs[1][0][0]),
+              "=r"(b_regs[2][0][0]), "=r"(b_regs[3][0][0])
+            : "r"(smem_base_b_addr + swizzled_address_b));
+
+        // Load 1: ---> End of A matrix loads
+        smem_a_index += 2 * MMA_M * BK;
+        smem_b_index += 4 * MMA_N;
+        swizzled_address_a = utils::swizzle<B, M, S_A>(smem_a_index) *
+                             static_cast<int32_t>(sizeof(T));
+        swizzled_address_b = utils::swizzle<B, M, S_B>(smem_b_index) *
+                             static_cast<int32_t>(sizeof(T));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
+            "%3}, [%4];\n"
+            : "=r"(a_regs[2][0][0]), "=r"(a_regs[2][0][1]),
+              "=r"(a_regs[3][0][0]), "=r"(a_regs[3][0][1])
+            : "r"(smem_base_a_addr + swizzled_address_a));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
+            "{%0, %1, %2, %3}, [%4];\n"
+            : "=r"(b_regs[4][0][0]), "=r"(b_regs[5][0][0]),
+              "=r"(b_regs[6][0][0]), "=r"(b_regs[7][0][0])
+            : "r"(smem_base_b_addr + swizzled_address_b));
+
+        // Load 2:
+        smem_b_index += 4 * MMA_N;
+        swizzled_address_b = utils::swizzle<B, M, S_B>(smem_b_index) *
+                             static_cast<int32_t>(sizeof(T));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
+            "{%0, %1, %2, %3}, [%4];\n"
+            : "=r"(b_regs[8][0][0]), "=r"(b_regs[9][0][0]),
+              "=r"(b_regs[10][0][0]), "=r"(b_regs[11][0][0])
+            : "r"(smem_base_b_addr + swizzled_address_b));
+
+        // Load 3: ----> End of A matrix loads
+        smem_b_index += 4 * MMA_N;
+        swizzled_address_b = utils::swizzle<B, M, S_B>(smem_b_index) *
+                             static_cast<int32_t>(sizeof(T));
+        asm volatile(
+            "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
+            "{%0, %1, %2, %3}, [%4];\n"
+            : "=r"(b_regs[12][0][0]), "=r"(b_regs[13][0][0]),
+              "=r"(b_regs[14][0][0]), "=r"(b_regs[15][0][0])
+            : "r"(smem_base_b_addr + swizzled_address_b));
+
 #pragma unroll
-        for (int _m = 0; _m < WM / MMA_M; _m++) {
+        for (int _n = 0; _n < WN / MMA_N; _n++) {
 #pragma unroll
-          for (int _n = 0; _n < WN / MMA_N; _n++) {
+          for (int _m = 0; _m < WM / MMA_M; _m++) {
             asm volatile(
-                "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 "
+                "mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 "
                 "{%0, %1}, "
-                "{%2, %3, %4, %5}, "
-                "{%6, %7}, "
+                "{%2, %3}, "
+                "{%4}, "
                 "{%0, %1}; \n"
                 : "+r"(c_regs[_m][_n][0]), "+r"(c_regs[_m][_n][1])
-                : "r"(a_regs[_m][_k][0]), "r"(a_regs[_m][_k][1]),
-                  "r"(a_regs[_m][_k][2]), "r"(a_regs[_m][_k][3]),
-                  "r"(b_regs[_n][_k][0]), "r"(b_regs[_n][_k][1]));
+                : "r"(a_regs[_m][0][0]), "r"(a_regs[_m][0][1]),
+                  "r"(b_regs[_n][0][0]));
           }
         }
       }
+
       head = (head + 1) % NumBuffers;
       if (k_load_index < k) {
         async_load::load_swizzled<T, BM, BK, NumThreads>(
-            a, smem_a_addr + tail * BM * BK * sizeof(T), k, block_row * BM,
-            k_load_index);
+            a, smem_a_addr + tail * BM * BK * static_cast<int32_t>(sizeof(T)),
+            k, block_row * BM, k_load_index);
         async_load::load_swizzled<T, BK, BN, NumThreads>(
-            b, smem_b_addr + tail * BK * BN * sizeof(T), n, k_load_index,
-            block_col * BN);
+            b, smem_b_addr + tail * BK * BN * static_cast<int32_t>(sizeof(T)),
+            n, k_load_index, block_col * BN);
 
         asm volatile("cp.async.commit_group;\n");
         tail = (tail + 1) % NumBuffers;
@@ -183,12 +214,7 @@ __launch_bounds__(NumThreads, 1) __global__
     }
 
     // Due to lack of registers, Do not load everything at once.
-    constexpr int ChunkLoads = 3 * (WM / 4);
-    uint32_t bias_regs[ChunkLoads][2];
-    const auto base_output_address =
-        (static_cast<int32_t>(block_row) * BM + warp_row * WM) * n +
-        block_col * BN + warp_col * WN + 4 * lane_id;
-    const auto base_bias_address = c + base_output_address;
+
     const auto base_d_address = d + base_output_address;
 
     uint32_t alpha_packed;
@@ -198,12 +224,6 @@ __launch_bounds__(NumThreads, 1) __global__
     asm volatile("mov.b32 %0, {%1, %1};\n" : "=r"(alpha_packed) : "h"(temp));
     temp = __half_as_ushort(beta);
     asm volatile("mov.b32 %0, {%1, %1};\n" : "=r"(beta_packed) : "h"(temp));
-#pragma unroll
-    for (int i = 0; i < ChunkLoads; i++) {
-      asm volatile("ld.global.cs.v2.b32 {%0, %1}, [%2]; \n"
-                   : "=r"(bias_regs[i][0]), "=r"(bias_regs[i][1])
-                   : "l"(base_bias_address + i * n));
-    }
 
     block_id += gridDim.x;
     // This actually ever so slightly degrades performance. I am yet to
