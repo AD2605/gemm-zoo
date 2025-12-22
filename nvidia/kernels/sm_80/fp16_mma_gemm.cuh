@@ -95,8 +95,8 @@ __launch_bounds__(NumThreads, 1) __global__
     }
 
     for (int kk = 0; kk < k; kk += BK) {
-      uint32_t a_regs[WM / MMA_M][2][2];
-      uint32_t b_regs[WN / MMA_N][2][1];
+      uint32_t a_regs[WM / MMA_M][1][2];
+      uint32_t b_regs[WN / MMA_N][1][1];
       asm volatile("cp.async.wait_group %0; \n" ::"n"(NumBuffers - 1));
       const int smem_base_a_addr =
           smem_a_addr + head * BM * BK * static_cast<int32_t>(sizeof(T));
@@ -129,14 +129,14 @@ __launch_bounds__(NumThreads, 1) __global__
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
             "%3}, [%4];\n"
-            : "=r"(a_regs[0][_k % 2][0]), "=r"(a_regs[0][_k % 2][1]),
-              "=r"(a_regs[1][_k % 2][0]), "=r"(a_regs[1][_k % 2][1])
+            : "=r"(a_regs[0][0][0]), "=r"(a_regs[0][0][1]),
+              "=r"(a_regs[1][0][0]), "=r"(a_regs[1][0][1])
             : "r"(smem_base_a_addr + swizzled_address_a));
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
             "{%0, %1, %2, %3}, [%4];\n"
-            : "=r"(b_regs[0][_k % 2][0]), "=r"(b_regs[1][_k % 2][0]),
-              "=r"(b_regs[2][_k % 2][0]), "=r"(b_regs[3][_k % 2][0])
+            : "=r"(b_regs[0][0][0]), "=r"(b_regs[1][0][0]),
+              "=r"(b_regs[2][0][0]), "=r"(b_regs[3][0][0])
             : "r"(smem_base_b_addr + swizzled_address_b));
 
         // Load 1: ---> End of A matrix loads
@@ -149,14 +149,14 @@ __launch_bounds__(NumThreads, 1) __global__
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.shared::cta.b16 {%0, %1, %2, "
             "%3}, [%4];\n"
-            : "=r"(a_regs[2][_k % 2][0]), "=r"(a_regs[2][_k % 2][1]),
-              "=r"(a_regs[3][_k % 2][0]), "=r"(a_regs[3][_k % 2][1])
+            : "=r"(a_regs[2][0][0]), "=r"(a_regs[2][0][1]),
+              "=r"(a_regs[3][0][0]), "=r"(a_regs[3][0][1])
             : "r"(smem_base_a_addr + swizzled_address_a));
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
             "{%0, %1, %2, %3}, [%4];\n"
-            : "=r"(b_regs[4][_k % 2][0]), "=r"(b_regs[5][_k % 2][0]),
-              "=r"(b_regs[6][_k % 2][0]), "=r"(b_regs[7][_k % 2][0])
+            : "=r"(b_regs[4][0][0]), "=r"(b_regs[5][0][0]),
+              "=r"(b_regs[6][0][0]), "=r"(b_regs[7][0][0])
             : "r"(smem_base_b_addr + swizzled_address_b));
 
         // Load 2:
@@ -166,8 +166,8 @@ __launch_bounds__(NumThreads, 1) __global__
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
             "{%0, %1, %2, %3}, [%4];\n"
-            : "=r"(b_regs[8][_k % 2][0]), "=r"(b_regs[9][_k % 2][0]),
-              "=r"(b_regs[10][_k % 2][0]), "=r"(b_regs[11][_k % 2][0])
+            : "=r"(b_regs[8][0][0]), "=r"(b_regs[9][0][0]),
+              "=r"(b_regs[10][0][0]), "=r"(b_regs[11][0][0])
             : "r"(smem_base_b_addr + swizzled_address_b));
 
         // Load 3: ----> End of A matrix loads
@@ -177,8 +177,8 @@ __launch_bounds__(NumThreads, 1) __global__
         asm volatile(
             "ldmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 "
             "{%0, %1, %2, %3}, [%4];\n"
-            : "=r"(b_regs[12][_k % 2][0]), "=r"(b_regs[13][_k % 2][0]),
-              "=r"(b_regs[14][_k % 2][0]), "=r"(b_regs[15][_k % 2][0])
+            : "=r"(b_regs[12][0][0]), "=r"(b_regs[13][0][0]),
+              "=r"(b_regs[14][0][0]), "=r"(b_regs[15][0][0])
             : "r"(smem_base_b_addr + swizzled_address_b));
 
 #pragma unroll
@@ -192,8 +192,8 @@ __launch_bounds__(NumThreads, 1) __global__
                 "{%4}, "
                 "{%0, %1}; \n"
                 : "+r"(c_regs[_m][_n][0]), "+r"(c_regs[_m][_n][1])
-                : "r"(a_regs[_m][_k % 2][0]), "r"(a_regs[_m][_k % 2][1]),
-                  "r"(b_regs[_n][_k % 2][0]));
+                : "r"(a_regs[_m][0][0]), "r"(a_regs[_m][0][1]),
+                  "r"(b_regs[_n][0][0]));
           }
         }
       }
