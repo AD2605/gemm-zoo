@@ -21,7 +21,7 @@ struct tf32_mma_gemm {
     assert(k % K == 0);
 
     static_assert(M % (256 / 8) == 0);
-    constexpr int WM = 64;
+    constexpr int WM = 32;
     constexpr int WN = 64;
     constexpr int NumThreads = ((M / WM) * (N / WN)) * 32;
     smem_size_required =
@@ -42,7 +42,7 @@ struct tf32_mma_gemm {
 
   void operator()(const TIn* a, const TIn* b, const TOut* c, TOut* d,
                   const TOut alpha, const TOut beta, cudaStream_t stream) {
-    constexpr int WM = 64;
+    constexpr int WM = 32;
     constexpr int WN = 64;
     constexpr int NumThreads = ((M / WM) * (N / WN)) * 32;
     nvidia::kernels::sm80::tf32_mma_gemm<M, N, K, WM, WN, 3, NumThreads>

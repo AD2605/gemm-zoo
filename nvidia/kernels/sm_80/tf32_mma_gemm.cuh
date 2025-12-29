@@ -93,6 +93,19 @@ __launch_bounds__(NumThreads) __global__
   }
 
   while (block_id < total_tiles) {
+    constexpr int ChunkLoads = WM;
+    float bias_regs[ChunkLoads][2];
+    const auto base_output_address =
+        (static_cast<int32_t>(block_row) * BM + warp_tile_row_id * WM) * n +
+        block_col * BN + warp_tile_col_id * WN + 2 * lane_id;
+    const auto base_c_address = c + base_output_address;
+#pragma unroll
+    for (int i = 0; i < ChunkLoads; i++) {
+      asm volatile("ld.global.cs.v2.f32 {%0, %1}, [%2]; \n\t"
+                   : "=f"(bias_regs[i][0]), "=f"(bias_regs[i][1])
+                   : "l"(base_c_address + i * n));
+    }
+
     float C_regs[WM / MMA_M][WN / MMA_N][TC];  // 4 x 4 x 4
     head = 0;
     for (int _i = 0; _i < WM / MMA_M; _i++) {
@@ -175,20 +188,7 @@ __launch_bounds__(NumThreads) __global__
       }
     }
 
-    constexpr int ChunkLoads = (WM / 2);
-    float bias_regs[ChunkLoads][2];
-    const auto base_output_address =
-        (static_cast<int32_t>(block_row) * BM + warp_tile_row_id * WM) * n +
-        block_col * BN + warp_tile_col_id * WN + 2 * lane_id;
-    const auto base_c_address = c + base_output_address;
     const auto base_d_address = d + base_output_address;
-
-#pragma unroll
-    for (int i = 0; i < ChunkLoads; i++) {
-      asm volatile("ld.global.cs.v2.f32 {%0, %1}, [%2]; \n\t"
-                   : "=f"(bias_regs[i][0]), "=f"(bias_regs[i][1])
-                   : "l"(base_c_address + i * n));
-    }
 
     block_id += gridDim.x;
     if (block_id < total_tiles) {
